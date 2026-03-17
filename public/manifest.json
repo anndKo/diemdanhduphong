@@ -1,0 +1,15 @@
+{
+  "short_name": "Điểm Danh",
+  "name": "App Điểm Danh Lớp Học",
+  "icons": [
+    {
+      "src": "/dd/logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "/dd/",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff"
+}
