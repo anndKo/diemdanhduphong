@@ -68,6 +68,7 @@ const PhotoStorageModal = ({ classInfo, onClose }: PhotoStorageModalProps) => {
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [selectedPhotoRecord, setSelectedPhotoRecord] = useState<AttendanceRecord | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isScanningUsers, setIsScanningUsers] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
@@ -643,49 +644,51 @@ const PhotoStorageModal = ({ classInfo, onClose }: PhotoStorageModalProps) => {
             <div className="mb-4 p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl shrink-0">
               <h3 className="text-lg font-semibold text-orange-800 dark:text-orange-200 mb-3 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
-                Báo cáo khuôn mặt trùng lặp
+                Báo cáo khuôn mặt trùng lặp ({duplicates.length} cặp)
               </h3>
-              <div className="space-y-3 max-h-[150px] overflow-auto">
+              <div className="space-y-4 max-h-[60vh] overflow-auto">
                 {duplicates.map((dup, index) => (
                   <div
                     key={index}
-                    className="p-3 bg-white dark:bg-card rounded-lg flex items-center justify-between gap-4"
+                    className="p-4 bg-white dark:bg-card rounded-xl border"
                   >
-                    <div className="flex items-center gap-4 flex-1">
-                      <button
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="px-2 py-1 bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 rounded-lg text-sm font-bold">
+                        {Math.round(dup.similarity * 100)}% giống
+                      </span>
+                      <span className="text-sm text-muted-foreground">Cặp #{index + 1}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div
+                        className="cursor-pointer rounded-xl overflow-hidden border-2 border-orange-300 dark:border-orange-700 hover:shadow-lg transition-shadow"
                         onClick={() => setSelectedPhoto(dup.photo1.photo_url)}
-                        className="flex items-center gap-2 hover:bg-muted/50 p-2 rounded-lg transition-colors"
                       >
                         <img
                           src={dup.photo1.photo_url}
                           alt={dup.photo1.name}
-                          className="w-12 h-12 object-cover rounded-lg"
+                          className="w-full aspect-square object-cover"
+                          loading="lazy"
                         />
-                        <div className="text-left">
-                          <p className="text-sm font-medium">{dup.photo1.name}</p>
-                          <p className="text-xs text-muted-foreground">{dup.photo1.student_code}</p>
+                        <div className="p-2 bg-muted/50">
+                          <p className="font-medium text-sm truncate">{dup.photo1.name}</p>
+                          <p className="text-xs text-muted-foreground">{dup.photo1.student_code} • Nhóm {dup.photo1.group_number}</p>
                         </div>
-                      </button>
-                      <span className="text-xl text-orange-500">↔</span>
-                      <button
+                      </div>
+                      <div
+                        className="cursor-pointer rounded-xl overflow-hidden border-2 border-orange-300 dark:border-orange-700 hover:shadow-lg transition-shadow"
                         onClick={() => setSelectedPhoto(dup.photo2.photo_url)}
-                        className="flex items-center gap-2 hover:bg-muted/50 p-2 rounded-lg transition-colors"
                       >
                         <img
                           src={dup.photo2.photo_url}
                           alt={dup.photo2.name}
-                          className="w-12 h-12 object-cover rounded-lg"
+                          className="w-full aspect-square object-cover"
+                          loading="lazy"
                         />
-                        <div className="text-left">
-                          <p className="text-sm font-medium">{dup.photo2.name}</p>
-                          <p className="text-xs text-muted-foreground">{dup.photo2.student_code}</p>
+                        <div className="p-2 bg-muted/50">
+                          <p className="font-medium text-sm truncate">{dup.photo2.name}</p>
+                          <p className="text-xs text-muted-foreground">{dup.photo2.student_code} • Nhóm {dup.photo2.group_number}</p>
                         </div>
-                      </button>
-                    </div>
-                    <div className="text-right">
-                      <span className="px-2 py-1 bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 rounded-lg text-sm font-medium">
-                        {Math.round(dup.similarity * 100)}% giống
-                      </span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -710,7 +713,7 @@ const PhotoStorageModal = ({ classInfo, onClose }: PhotoStorageModalProps) => {
                   <div
                     key={record.id}
                     className="group relative rounded-xl overflow-hidden cursor-pointer hover:shadow-lg transition-all duration-300"
-                    onClick={() => setSelectedPhoto(record.photo_url)}
+                    onClick={() => { setSelectedPhoto(record.photo_url); setSelectedPhotoRecord(record); }}
                   >
                     <img
                       src={record.photo_url}
@@ -740,7 +743,15 @@ const PhotoStorageModal = ({ classInfo, onClose }: PhotoStorageModalProps) => {
       {selectedPhoto && (
         <PhotoViewModal
           photoUrl={selectedPhoto}
-          onClose={() => setSelectedPhoto(null)}
+          studentInfo={selectedPhotoRecord ? {
+            student_code: selectedPhotoRecord.student_code,
+            student_name: selectedPhotoRecord.name,
+            group_number: selectedPhotoRecord.group_number,
+            class_id: classInfo.id,
+            week_number: selectedPhotoRecord.week_number,
+          } : undefined}
+          onClose={() => { setSelectedPhoto(null); setSelectedPhotoRecord(null); }}
+          onWarningAdded={() => {}}
         />
       )}
 

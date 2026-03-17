@@ -41,7 +41,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
 
     setIsLoading(true);
     try {
-      // Get current admin session first
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         toast.error("Phiên đăng nhập đã hết hạn!");
@@ -49,35 +48,45 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
       }
       
       const adminUserId = session.user.id;
+      const adminAccessToken = session.access_token;
+      const adminRefreshToken = session.refresh_token;
+      const normalizedEmail = email.trim().toLowerCase();
       
-      // First, add to teachers table (before creating auth account)
-      // This ensures the RLS policy check passes
+      // Check if teacher already exists
+      const { data: existingTeacher } = await supabase
+        .from("teachers" as any)
+        .select("email")
+        .eq("email", normalizedEmail)
+        .maybeSingle();
+
+      if (existingTeacher) {
+        toast.error("Email này đã có trong danh sách giảng viên!");
+        return;
+      }
+
+      // Add to teachers table first
       const { error: teacherError } = await supabase
         .from("teachers" as any)
         .insert({
-          email: email.trim().toLowerCase(),
+          email: normalizedEmail,
           created_by: adminUserId,
         });
 
       if (teacherError) {
         console.error("Error adding teacher to table:", teacherError);
-        if (teacherError.code === '23505') {
-          toast.error("Email này đã có trong danh sách giảng viên!");
-        } else {
-          toast.error("Không thể thêm giảng viên vào danh sách!");
-        }
+        toast.error("Không thể thêm giảng viên vào danh sách!");
         return;
       }
 
-      // Create the teacher account using Supabase Auth
+      // Create auth account - this will switch the session!
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: normalizedEmail,
         password,
       });
 
       if (signUpError) {
-        // Rollback: delete from teachers table
-        await supabase.from("teachers" as any).delete().eq("email", email.trim().toLowerCase());
+        // Rollback
+        await supabase.from("teachers" as any).delete().eq("email", normalizedEmail);
         
         if (signUpError.message.includes("already registered")) {
           toast.error("Email này đã được đăng ký!");
@@ -88,10 +97,15 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
       }
 
       if (!signUpData.user) {
-        // Rollback: delete from teachers table
-        await supabase.from("teachers" as any).delete().eq("email", email.trim().toLowerCase());
+        await supabase.from("teachers" as any).delete().eq("email", normalizedEmail);
         throw new Error("Không thể tạo tài khoản!");
       }
+
+      // CRITICAL: Restore admin session after signUp switched it
+      await supabase.auth.setSession({
+        access_token: adminAccessToken,
+        refresh_token: adminRefreshToken,
+      });
 
       toast.success(`Đã tạo tài khoản giảng viên: ${email}`);
       onClose();
@@ -110,7 +124,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
         className="modal-content w-full max-w-md p-6 md:p-8 animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -130,7 +143,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email */}
           <div className="space-y-2">
             <Label className="text-sm font-medium flex items-center gap-2">
               <Mail className="w-4 h-4" />
@@ -145,7 +157,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
             />
           </div>
 
-          {/* Password */}
           <div className="space-y-2">
             <Label className="text-sm font-medium flex items-center gap-2">
               <Lock className="w-4 h-4" />
@@ -160,7 +171,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
             />
           </div>
 
-          {/* Confirm Password */}
           <div className="space-y-2">
             <Label className="text-sm font-medium flex items-center gap-2">
               <Lock className="w-4 h-4" />
@@ -175,7 +185,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
             />
           </div>
 
-          {/* Info */}
           <div className="p-3 bg-muted/50 rounded-lg text-sm text-muted-foreground">
             <p>Giảng viên có thể:</p>
             <ul className="list-disc list-inside mt-1 space-y-1">
@@ -188,7 +197,6 @@ const CreateTeacherModal = ({ onClose }: CreateTeacherModalProps) => {
             </p>
           </div>
 
-          {/* Submit */}
           <Button
             type="submit"
             disabled={isLoading}

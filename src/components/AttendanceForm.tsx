@@ -2,10 +2,10 @@ import { useState, useRef, useCallback, useEffect, memo, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { X, Camera, User, Hash, Users, Loader2, RefreshCw, Calendar, Star, Shield, CheckCircle } from "lucide-react";
+import { X, Camera, User, Hash, Users, Loader2, RefreshCw, Calendar, Star, Shield, CheckCircle, Plus } from "lucide-react";
 
 import { z } from "zod";
 import { normalizeName, compareNames, compareStrings } from "@/lib/nameUtils";
@@ -86,9 +86,14 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
   const [isLoadingStudents, setIsLoadingStudents] = useState(true);
   const [studentNotFoundError, setStudentNotFoundError] = useState<string | null>(null);
   
-  // Bonus points
-  const [hasBonusPoints, setHasBonusPoints] = useState(false);
-  const [bonusPoints, setBonusPoints] = useState("");
+  // Bonus points code - support multiple codes
+  const [bonusCodes, setBonusCodes] = useState<string[]>([]);
+  const [bonusCodeInput, setBonusCodeInput] = useState("");
+  const [isBonusEnabled, setIsBonusEnabled] = useState(false);
+  const [bonusCodeError, setBonusCodeError] = useState<string | null>(null);
+  
+  // Prevent double submit
+  const isSubmittingRef = useRef(false);
   
   // Advanced verification
   const [showLivenessVerification, setShowLivenessVerification] = useState(false);
@@ -103,13 +108,27 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
 
   useEffect(() => {
     fetchStudents();
+    checkBonusEnabled();
     return () => {
-      // Cleanup camera on unmount
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, [classInfo.id]);
+
+  const checkBonusEnabled = async () => {
+    try {
+      // Check if any bonus codes exist for this class
+      const { data, error } = await supabase
+        .from("class_bonus_points" as any)
+        .select("id")
+        .eq("class_id", classInfo.id)
+        .eq("status", "unused")
+        .limit(1);
+      if (error) throw error;
+      setIsBonusEnabled((data as any[])?.length > 0);
+    } catch { setIsBonusEnabled(false); }
+  };
 
   const fetchStudents = async () => {
     try {
@@ -121,7 +140,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       if (error) throw error;
       setStudents((data as any[]) || []);
     } catch (error) {
-      console.error("Error fetching students:", error);
+      
     } finally {
       setIsLoadingStudents(false);
     }
@@ -136,8 +155,15 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
     }
   
     try {
+      const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        video: {
+          facingMode: "user",
+          width: { ideal: isMobileDevice ? 480 : 640 },
+          height: { ideal: isMobileDevice ? 360 : 480 },
+          ...(isIOSDevice ? { frameRate: { ideal: 24, max: 30 } } : {}),
+        },
         audio: false,
       });
   
@@ -200,7 +226,9 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       ctx.scale(-1, 1);
 
       ctx.drawImage(videoRef.current, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      // Lower quality on mobile for faster processing
+      const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const dataUrl = canvas.toDataURL("image/jpeg", isMobileDevice ? 0.75 : 0.85);
       setPhotoData(dataUrl);
       stopCamera();
       toast.success("Đã chụp ảnh!");
@@ -228,58 +256,27 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       return { valid: false, error: "Vui lòng điền đầy đủ thông tin" };
     }
 
-    // Check if ALL three fields match exactly with any student in the list  
-    // If ANY field doesn't match (name OR code OR group), reject
-    const matchingStudent = students.find((s) => {
-      const nameMatch = compareNames(s.name, normalizedInputName);
-      const codeMatch = compareStrings(s.student_code, normalizedStudentCode);
-      const groupMatch = compareStrings(s.group_number, normalizedGroupNumber);
-      
-      // All three fields must match exactly
-      return nameMatch && codeMatch && groupMatch;
-    });
+    // Step 1: Check student code exists
+    const byCode = students.find((s) => compareStrings(s.student_code, normalizedStudentCode));
+    if (!byCode) {
+      return { valid: false, error: `Mã sinh viên "${normalizedStudentCode}" không có trong danh sách lớp. Vui lòng kiểm tra lại!` };
+    }
 
-    if (!matchingStudent) {
-      // Additional debugging: Check what's not matching
-      const partialMatch = students.find((s) => {
-        return compareStrings(s.student_code, normalizedStudentCode);
-      });
-      
-      if (partialMatch) {
-        // Student code exists but other fields don't match
-        const nameMatches = compareNames(partialMatch.name, normalizedInputName);
-        const groupMatches = compareStrings(partialMatch.group_number, normalizedGroupNumber);
-        
-        if (!nameMatches && !groupMatches) {
-          return { 
-            valid: false, 
-            error: "Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên." 
-          };
-        } else if (!nameMatches) {
-          return { 
-            valid: false, 
-            error: "Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên." 
-          };
-        } else if (!groupMatches) {
-          return { 
-            valid: false, 
-            error: "Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên." 
-          };
-        }
-      }
-      
-      return { 
-        valid: false, 
-        error: "Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên." 
-      };
+    // Step 2: Check name matches for that student code
+    if (!compareNames(byCode.name, normalizedInputName)) {
+      return { valid: false, error: `Họ tên không khớp với mã sinh viên ${normalizedStudentCode}. Tên đúng phải trùng với danh sách lớp. Vui lòng kiểm tra lại!` };
+    }
+
+    // Step 3: Check group matches
+    if (!compareStrings(byCode.group_number, normalizedGroupNumber)) {
+      return { valid: false, error: `Số nhóm không khớp. Mã SV ${normalizedStudentCode} thuộc nhóm ${byCode.group_number}, bạn nhập nhóm ${normalizedGroupNumber}. Vui lòng kiểm tra lại!` };
     }
 
     return { valid: true };
   };
 
-  // Real-time validation when any field changes
+  // Debounced real-time validation when any field changes
   useEffect(() => {
-    // Only validate if there are students in the list and all fields have values
     if (students.length === 0) {
       setStudentNotFoundError(null);
       return;
@@ -289,55 +286,46 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
     const normalizedStudentCode = studentCode.trim();
     const normalizedGroupNumber = groupNumber.trim();
 
-    // Start validation when at least one field has value
     if (!normalizedInputName && !normalizedStudentCode && !normalizedGroupNumber) {
       setStudentNotFoundError(null);
       return;
     }
 
-    // If not all fields filled, don't show error yet but don't clear it either
-    if (!normalizedInputName || !normalizedStudentCode || !normalizedGroupNumber) {
-      // Show error only if some fields are filled but not all
-      if (normalizedInputName || normalizedStudentCode || normalizedGroupNumber) {
-        // Check partial match to give early feedback
-        const hasAnyMatch = students.some((s) => {
-          const nameMatch = normalizedInputName ? compareNames(s.name, normalizedInputName) : true;
-          const codeMatch = normalizedStudentCode ? compareStrings(s.student_code, normalizedStudentCode) : true;
-          const groupMatch = normalizedGroupNumber ? compareStrings(s.group_number, normalizedGroupNumber) : true;
-          
-          // Check if filled fields match
-          if (normalizedInputName && !compareNames(s.name, normalizedInputName)) return false;
-          if (normalizedStudentCode && !compareStrings(s.student_code, normalizedStudentCode)) return false;
-          if (normalizedGroupNumber && !compareStrings(s.group_number, normalizedGroupNumber)) return false;
-          
-          return true;
-        });
-        
-        if (!hasAnyMatch && (normalizedInputName || normalizedStudentCode || normalizedGroupNumber)) {
-          setStudentNotFoundError("Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên.");
-        } else {
-          setStudentNotFoundError(null);
+    // Debounce validation by 300ms to avoid running on every keystroke
+    const timer = setTimeout(() => {
+      if (normalizedStudentCode) {
+        const byCode = students.find((s) => compareStrings(s.student_code, normalizedStudentCode));
+        if (!byCode) {
+          setStudentNotFoundError(`Mã sinh viên "${normalizedStudentCode}" không có trong danh sách lớp.`);
+          return;
+        }
+        if (normalizedInputName && !compareNames(byCode.name, normalizedInputName)) {
+          setStudentNotFoundError(`Họ tên không khớp với mã sinh viên ${normalizedStudentCode}. Vui lòng kiểm tra lại!`);
+          return;
+        }
+        if (normalizedGroupNumber && !compareStrings(byCode.group_number, normalizedGroupNumber)) {
+          setStudentNotFoundError(`Số nhóm không khớp. Mã SV ${normalizedStudentCode} thuộc nhóm ${byCode.group_number}.`);
+          return;
+        }
+        setStudentNotFoundError(null);
+        return;
+      }
+
+      if (normalizedInputName) {
+        const byName = students.find((s) => compareNames(s.name, normalizedInputName));
+        if (!byName) {
+          setStudentNotFoundError("Họ tên không có trong danh sách lớp. Vui lòng kiểm tra lại!");
+          return;
         }
       }
-      return;
-    }
-
-    // Check for exact match
-    const matchingStudent = students.find((s) => {
-      const nameMatch = compareNames(s.name, normalizedInputName);
-      const codeMatch = compareStrings(s.student_code, normalizedStudentCode);
-      const groupMatch = compareStrings(s.group_number, normalizedGroupNumber);
-      return nameMatch && codeMatch && groupMatch;
-    });
-
-    if (!matchingStudent) {
-      setStudentNotFoundError("Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên.");
-    } else {
       setStudentNotFoundError(null);
-    }
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [name, studentCode, groupNumber, students]);
 
   const handleSubmit = async (e: React.FormEvent) => {
+    
     e.preventDefault();
     setErrors({});
     setStudentNotFoundError(null);
@@ -356,13 +344,28 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       return;
     }
 
-    // Validate student is in the list - check if ANY field doesn't match
+    // Validate student is in the list - ALWAYS re-check before saving
     const validationResult = validateStudentInList();
     if (!validationResult.valid) {
-      const errorMsg = validationResult.error || "Bạn không có tên trong lớp. Vui lòng liên hệ giảng viên.";
+      const errorMsg = validationResult.error || "Thông tin không khớp với danh sách lớp. Vui lòng kiểm tra lại tên, mã sinh viên và số nhóm.";
       setStudentNotFoundError(errorMsg);
       toast.error(errorMsg);
       return;
+    }
+
+    // Double-check: if students list exists, require exact match
+    if (students.length > 0) {
+      const exactMatch = students.find((s) => 
+        compareNames(s.name, normalizedName) && 
+        compareStrings(s.student_code, studentCode.trim()) && 
+        compareStrings(s.group_number, groupNumber.trim())
+      );
+      if (!exactMatch) {
+        const errorMsg = "Tên, mã sinh viên hoặc nhóm không khớp với danh sách lớp. Vui lòng kiểm tra lại!";
+        setStudentNotFoundError(errorMsg);
+        toast.error(errorMsg);
+        return;
+      }
     }
 
     // Validate week number
@@ -377,79 +380,130 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       return;
     }
 
-    // Validate bonus points if enabled
-    const bonusPointsValue = hasBonusPoints && bonusPoints ? parseInt(bonusPoints) : 0;
-    if (hasBonusPoints && bonusPoints && (isNaN(bonusPointsValue) || bonusPointsValue < 0)) {
-      toast.error("Điểm cộng không hợp lệ!");
-      return;
+    // Validate all bonus codes in parallel if enabled
+    
+    const validBonusCodes: string[] = [];
+    if (bonusCodes.length > 0) {
+      const codeChecks = await Promise.all(
+        bonusCodes.map(code =>
+          supabase
+            .from("class_bonus_points" as any)
+            .select("id, bonus_code, status, used_by_student_name, used_by_student_id, used_by_group")
+            .eq("class_id", classInfo.id)
+            .eq("bonus_code", code)
+            .single()
+            .then(({ data, error }) => {
+              if (error || !data) return { code, valid: false, reason: "not_found" as const, data: null };
+              const d = data as any;
+              if (d.status === "used") return { code, valid: false, reason: "used" as const, data: d };
+              return { code, valid: true, reason: "ok" as const, data: d };
+            })
+        )
+      );
+      
+      const invalid = codeChecks.find(c => !c.valid);
+      if (invalid) {
+        if (invalid.reason === "used" && invalid.data) {
+          const d = invalid.data;
+          setBonusCodeError(`Mã "${invalid.code}" đã được sử dụng bởi: ${d.used_by_student_name} (MSV: ${d.used_by_student_id}, Nhóm ${d.used_by_group})`);
+        } else {
+          setBonusCodeError(`Mã điểm thưởng "${invalid.code}" không hợp lệ!`);
+        }
+        toast.error(`Mã điểm thưởng "${invalid.code}" không hợp lệ hoặc đã sử dụng!`);
+        return;
+      }
+      validBonusCodes.push(...codeChecks.map(c => c.code));
     }
+    const bonusPointsValue = validBonusCodes.length;
 
+    // Prevent double submit
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setIsLoading(true);
 
     try {
       // Compress photo for faster upload on slow networks
       const blob = await fetch(photoData).then(r => r.blob());
-      
-      // Use smaller file size for faster upload
       const compressedBlob = new Blob([blob], { type: "image/jpeg" });
       const fileName = `${classInfo.id}/${Date.now()}_${studentCode}.jpg`;
       
-      // Upload with retry logic for unstable networks
-      let uploadError = null;
+      // Upload photo and save record in parallel where possible
+      let photoUrl = "";
+      
+      // Upload with retry
       for (let attempt = 0; attempt < 3; attempt++) {
         const { error } = await supabase.storage
           .from("attendance-photos")
-          .upload(fileName, compressedBlob, { 
-            contentType: "image/jpeg",
-            cacheControl: "3600",
-          });
-        
-        if (!error) {
-          uploadError = null;
-          break;
-        }
-        uploadError = error;
-        // Wait before retry
-        if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+          .upload(fileName, compressedBlob, { contentType: "image/jpeg", cacheControl: "3600" });
+        if (!error) break;
+        if (attempt === 2) throw error;
+        await new Promise(r => setTimeout(r, 500));
       }
-
-      if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage
         .from("attendance-photos")
         .getPublicUrl(fileName);
+      photoUrl = publicUrl;
 
-      // Save attendance record with retry
-      let insertError = null;
+      // Save attendance record
       for (let attempt = 0; attempt < 3; attempt++) {
         const { error } = await supabase
           .from("attendance_records" as any)
           .insert({
             class_id: classInfo.id,
-            name: normalizedName, // Use normalized name
+            name: normalizedName,
             student_code: studentCode,
             group_number: groupNumber,
-            photo_url: publicUrl,
+            photo_url: photoUrl,
             week_number: week,
             bonus_points: bonusPointsValue,
           });
-        
-        if (!error) {
-          insertError = null;
-          break;
-        }
-        insertError = error;
-        if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+        if (!error) break;
+        if (attempt === 2) throw error;
+        await new Promise(r => setTimeout(r, 500));
       }
 
-      if (insertError) throw insertError;
+      // Mark valid bonus codes as used in new class_bonus_points table
+      
+
+
+     if (validBonusCodes.length > 0) {
+       
+
+      const { data, error } = await (supabase as any)
+        .from("class_bonus_points")
+        .update({
+          status: "used",
+          used_by_student_name: normalizedName,
+          used_by_student_id: studentCode,
+          used_by_group: groupNumber,
+          used_at: new Date().toISOString(),
+        })
+        .in("bonus_code", validBonusCodes)
+        .eq("class_id", classInfo.id)
+        .eq("status", "unused")
+        .select();
+    
+      
+    
+
+    
+      if (!data || data.length === 0) {
+        toast.error("Mã không hợp lệ hoặc đã được sử dụng");
+      }
+    
+      if (data && data.length > 0) {
+        toast.success(`Áp dụng ${data.length} mã thưởng thành công ⭐`);
+      }
+    }
 
       onSuccess();
     } catch (error) {
-      console.error("Submit error:", error);
+      
       toast.error("Có lỗi xảy ra khi lưu điểm danh! Vui lòng thử lại.");
     } finally {
       setIsLoading(false);
+      isSubmittingRef.current = false;
     }
   };
 
@@ -499,9 +553,10 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                     autoPlay
                     playsInline
                     muted
-                    className={`w-full h-full object-cover scale-x-[-1] ${
+                    className={`w-full h-full object-cover will-change-transform ${
                       isCameraActive ? "block" : "hidden"
                     }`}
+                    style={{ transform: "scaleX(-1)" }}
                   />
                 
                   {/* ẢNH SAU KHI CHỤP */}
@@ -533,16 +588,18 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                 <div className="flex gap-2">
                   {photoData ? (
                     <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={retakePhoto}
-                        className="flex-1"
-                      >
-                        <RefreshCw className="w-4 h-4 mr-2" />
-                        Chụp lại
-                      </Button>
-                      {/* Show verify button if advanced verification is required and not yet verified */}
+                      {/* Hide retake button after verification is done */}
+                      {!(requiresVerification && isLivenessVerified) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={retakePhoto}
+                          className="flex-1"
+                        >
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Chụp lại
+                        </Button>
+                      )}
                       {requiresVerification && !isLivenessVerified && (
                         <Button
                           type="button"
@@ -675,28 +732,94 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                 <p className="text-xs text-muted-foreground">Tuần được đặt bởi giảng viên</p>
               </div>
 
-              {/* Bonus Points Toggle */}
-              <div className="space-y-3 p-4 bg-muted/50 rounded-xl">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium flex items-center gap-2 cursor-pointer">
-                    <Star className="w-4 h-4 text-amber-500" />
-                    Điểm cộng
-                  </Label>
-                  <Switch
-                    checked={hasBonusPoints}
-                    onCheckedChange={setHasBonusPoints}
-                  />
-                </div>
-                {hasBonusPoints && (
+              {/* Bonus Code Input - always visible */}
+              <div className="space-y-3 p-4 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                <Label className="text-sm font-medium flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-500" />
+                  Mã điểm thưởng (không bắt buộc)
+                </Label>
+                
+                {/* Added bonus codes list */}
+                {bonusCodes.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {bonusCodes.map((code, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-1 px-3 py-1 bg-amber-500/20 text-amber-700 rounded-full text-sm font-mono">
+                        {code} (+1)
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBonusCodes(prev => prev.filter((_, i) => i !== idx));
+                            setBonusCodeError(null);
+                          }}
+                          className="ml-1 hover:text-destructive"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                
+                <div className="flex gap-2">
                   <Input
-                    type="number"
-                    placeholder="Nhập số điểm cộng"
-                    value={bonusPoints}
-                    onChange={(e) => setBonusPoints(e.target.value)}
-                    className="input-modern"
-                    min={0}
-                    max={100}
+                      placeholder="Nhập mã 6 số"
+                      value={bonusCodeInput}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, "").slice(0, 6);
+                        setBonusCodeInput(val);
+                        setBonusCodeError(null);
+                    
+                        // ⭐ tự thêm mã khi đủ 6 số
+                        if (val.length === 6) {
+                    
+                          if (bonusCodes.includes(val)) {
+                            setBonusCodeError("Mã này đã được thêm rồi!");
+                            return;
+                          }
+                    
+                          setBonusCodes(prev => [...prev, val]);
+                    
+                          // reset ô nhập để nhập mã tiếp
+                          setBonusCodeInput("");
+                        }
+                      }}
+                    className="input-modern font-mono text-lg tracking-widest flex-1"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
                   />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={bonusCodeInput.length !== 6}
+                    onClick={() => {
+                      const code = bonusCodeInput.trim();
+                  
+                      if (bonusCodes.includes(code)) {
+                        setBonusCodeError("Mã này đã được thêm rồi!");
+                        return;
+                      }
+                  
+                      setBonusCodes(prev => [...prev, code]);
+                      setBonusCodeInput("");
+                      setBonusCodeError(null);
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Thêm mã
+                  </Button>
+                </div>
+                
+                {bonusCodeError && (
+                  <p className="text-sm text-destructive">{bonusCodeError}</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Nhập mã 6 chữ số do giảng viên cung cấp, mỗi mã +1 điểm (có thể thêm nhiều mã)
+                </p>
+                {bonusCodes.length > 0 && (
+                  <p className="text-xs font-medium text-amber-600">
+                    Tổng điểm thưởng: +{bonusCodes.length}
+                  </p>
                 )}
               </div>
 

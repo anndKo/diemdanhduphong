@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,14 +22,17 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
-  AlertTriangle
+  AlertTriangle,
+  UserX
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import PhotoViewModal from "@/components/PhotoViewModal";
 import PhotoStorageModal from "@/components/PhotoStorageModal";
+import UnmatchedStudentsModal from "@/components/UnmatchedStudentsModal";
+import WarningStudentsModal from "@/components/WarningStudentsModal";
 import * as XLSX from "xlsx";
-import { normalizeName } from "@/lib/nameUtils";
+import { normalizeName, sortByLastName } from "@/lib/nameUtils";
 
 interface ClassInfo {
   id: string;
@@ -61,16 +64,28 @@ interface ClassDetailModalProps {
   onClose: () => void;
 }
 
+interface LeaveRecord {
+  id: string;
+  student_code: string;
+  week_number: number;
+}
+
 const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [leaveRecords, setLeaveRecords] = useState<LeaveRecord[]>([]);
+  const [manualBonusRecords, setManualBonusRecords] = useState<{student_code: string; week_number: number; bonus_points: number}[]>([]);
+  const [manualBonusHistoryRecords, setManualBonusHistoryRecords] = useState<{student_id: string; week_number: number; bonus_point: number}[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [excelInput, setExcelInput] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [selectedPhotoRecord, setSelectedPhotoRecord] = useState<AttendanceRecord | null>(null);
   const [currentWeek, setCurrentWeek] = useState(1);
   const [attendanceWeekFilter, setAttendanceWeekFilter] = useState<number | null>(null); // null = all weeks
   const [showPhotoStorage, setShowPhotoStorage] = useState(false);
+  const [showUnmatched, setShowUnmatched] = useState(false);
+  const [showWarnings, setShowWarnings] = useState(false);
   const [attendanceSearch, setAttendanceSearch] = useState(""); // Search for attendance
   const [studentSearch, setStudentSearch] = useState(""); // Search for student list
   const [showImportSection, setShowImportSection] = useState(false); // Collapsible import
@@ -78,14 +93,21 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Search filter for students list
+  // Sort students by last word in Vietnamese name
+  const sortedStudents = useMemo(() => sortByLastName(students), [students]);
+
   const filteredStudents = useMemo(() => {
-    if (!studentSearch.trim()) return students;
+    if (!studentSearch.trim()) return sortedStudents;
     const searchLower = studentSearch.toLowerCase().trim();
-    return students.filter(s => 
-      s.name.toLowerCase().includes(searchLower) ||
-      s.student_code.toLowerCase().includes(searchLower)
-    );
-  }, [students, studentSearch]);
+    const searchNoDiacritics = searchLower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return sortedStudents.filter(s => {
+      const nameLower = s.name.toLowerCase();
+      const nameNoDiacritics = nameLower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return nameLower.includes(searchLower) ||
+        nameNoDiacritics.includes(searchNoDiacritics) ||
+        s.student_code.toLowerCase().includes(searchLower);
+    });
+  }, [sortedStudents, studentSearch]);
 
   // Find duplicate attendance (same student attended 2+ times in same week)
   const duplicateRecords = useMemo(() => {
@@ -135,9 +157,12 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
 
   const fetchData = async () => {
     try {
-      const [studentsRes, attendanceRes] = await Promise.all([
+      const [studentsRes, attendanceRes, leavesRes, bonusHistoryRes, manualBonusRes] = await Promise.all([
         supabase.from("students" as any).select("*").eq("class_id", classInfo.id).order("name"),
         supabase.from("attendance_records" as any).select("*").eq("class_id", classInfo.id).order("created_at", { ascending: false }),
+        supabase.from("student_leaves" as any).select("id, student_code, week_number").eq("class_id", classInfo.id),
+        supabase.from("bonus_points_history" as any).select("student_code, week_number, bonus_points").eq("class_id", classInfo.id),
+        supabase.from("manual_bonus_history" as any).select("student_id, week_number, bonus_point").eq("class_id", classInfo.id),
       ]);
 
       if (studentsRes.error) throw studentsRes.error;
@@ -145,6 +170,9 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
 
       setStudents((studentsRes.data as any[]) || []);
       setAttendanceRecords((attendanceRes.data as any[]) || []);
+      setLeaveRecords((leavesRes.data as any[]) || []);
+      setManualBonusRecords((bonusHistoryRes.data as any[]) || []);
+      setManualBonusHistoryRecords((manualBonusRes.data as any[]) || []);
     } catch (error) {
       console.error("Error fetching data:", error);
       toast.error("Không thể tải dữ liệu!");
@@ -324,23 +352,38 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
     );
   };
 
+  // Check if student has leave in a specific week
+  const hasLeaveInWeek = (studentCode: string, week: number) => {
+    return leaveRecords.some(
+      (r) => r.student_code.toLowerCase() === studentCode.toLowerCase() && r.week_number === week
+    );
+  };
+
   // Get total bonus points for a student
   const getTotalBonusPoints = (studentCode: string) => {
-    return attendanceRecords
+    const fromAttendance = attendanceRecords
       .filter((r) => r.student_code.toLowerCase() === studentCode.toLowerCase())
       .reduce((sum, r) => sum + (r.bonus_points || 0), 0);
+    const fromBonusHistory = manualBonusRecords
+      .filter((r) => r.student_code.toLowerCase() === studentCode.toLowerCase())
+      .reduce((sum, r) => sum + (r.bonus_points || 0), 0);
+    const fromManualHistory = manualBonusHistoryRecords
+      .filter((r) => r.student_id.toLowerCase() === studentCode.toLowerCase())
+      .reduce((sum, r) => sum + (r.bonus_point || 0), 0);
+    return fromAttendance + fromBonusHistory + fromManualHistory;
   };
 
   // Export to Excel
   const handleExportExcel = () => {
-    const exportData = students.map((student) => {
+    const exportData = sortedStudents.map((student) => {
       const weekData: Record<string, string> = {};
       let totalAttended = 0;
       
       for (let w = 1; w <= classInfo.weeks_count; w++) {
         const attended = didAttendInWeek(student.student_code, w);
-        weekData[`Tuần ${w}`] = attended ? "✓" : "✗";
-        if (attended) totalAttended++;
+        const leave = hasLeaveInWeek(student.student_code, w);
+        weekData[`Tuần ${w}`] = attended ? "✓" : leave ? "P" : "✗";
+        if (attended || leave) totalAttended++;
       }
       
       const totalBonusPoints = getTotalBonusPoints(student.student_code);
@@ -407,14 +450,36 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                   Điểm danh ({attendanceRecords.length})
                 </TabsTrigger>
               </TabsList>
-              <Button
-                variant="outline"
-                onClick={() => setShowPhotoStorage(true)}
-                className="flex items-center gap-2"
-              >
-                <FolderOpen className="w-4 h-4" />
-                Kho lưu trữ
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowUnmatched(true)}
+                  className="flex items-center gap-2 border-destructive/30 text-destructive hover:bg-destructive/10"
+                >
+                  <UserX className="w-4 h-4" />
+                  <span className="hidden sm:inline">Quét SV ngoài DS</span>
+                  <span className="sm:hidden">Quét</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowWarnings(true)}
+                  className="flex items-center gap-2 border-yellow-400 text-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
+                >
+                  <AlertTriangle className="w-4 h-4" />
+                  <span className="hidden sm:inline">SV cảnh báo</span>
+                  <span className="sm:hidden">Cảnh báo</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowPhotoStorage(true)}
+                  className="flex items-center gap-2"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  Kho lưu trữ
+                </Button>
+              </div>
             </div>
 
             <TabsContent value="students" className="flex-1 flex flex-col min-h-0 mt-2 px-4 md:px-6 pb-4 md:pb-6 data-[state=inactive]:hidden">
@@ -554,6 +619,7 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                         <tbody className="divide-y">
                         {filteredStudents.map((student, index) => {
                           const attended = didAttendInWeek(student.student_code, currentWeek);
+                          const hasLeave = hasLeaveInWeek(student.student_code, currentWeek);
                           const bonusPoints = getTotalBonusPoints(student.student_code);
                           return (
                             <tr key={student.id} className="hover:bg-muted/30 transition-colors">
@@ -567,8 +633,9 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                               <td className="p-2 md:p-3 text-center">
                                 <button
                                   onClick={() => {
+                                    const status = attended ? "Đã điểm danh ✓" : hasLeave ? "Có phép +" : "Chưa điểm danh ✗";
                                     toast.info(
-                                      `${student.name} (${student.student_code}): ${attended ? "Đã điểm danh ✓" : "Chưa điểm danh ✗"}`,
+                                      `${student.name} (${student.student_code}): ${status}`,
                                       { duration: 3000 }
                                     );
                                   }}
@@ -576,6 +643,8 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                                 >
                                   {attended ? (
                                     <Check className="w-5 h-5 text-green-600 mx-auto" />
+                                  ) : hasLeave ? (
+                                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-600 font-bold text-sm mx-auto">+</span>
                                   ) : (
                                     <XCircle className="w-5 h-5 text-red-500 mx-auto" />
                                   )}
@@ -740,7 +809,7 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                                           <Button
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() => setSelectedPhoto(record.photo_url)}
+                                            onClick={() => { setSelectedPhoto(record.photo_url); setSelectedPhotoRecord(record); }}
                                             className="text-primary hover:text-primary"
                                           >
                                             <ImageIcon className="w-4 h-4 mr-1" />
@@ -811,7 +880,7 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => setSelectedPhoto(record.photo_url)}
+                                    onClick={() => { setSelectedPhoto(record.photo_url); setSelectedPhotoRecord(record); }}
                                     className="text-primary hover:text-primary"
                                   >
                                     <ImageIcon className="w-4 h-4 mr-1" />
@@ -845,7 +914,15 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
       {selectedPhoto && (
         <PhotoViewModal
           photoUrl={selectedPhoto}
-          onClose={() => setSelectedPhoto(null)}
+          studentInfo={selectedPhotoRecord ? {
+            student_code: selectedPhotoRecord.student_code,
+            student_name: selectedPhotoRecord.name,
+            group_number: selectedPhotoRecord.group_number,
+            class_id: classInfo.id,
+            week_number: selectedPhotoRecord.week_number,
+          } : undefined}
+          onClose={() => { setSelectedPhoto(null); setSelectedPhotoRecord(null); }}
+          onWarningAdded={() => {}}
         />
       )}
 
@@ -854,6 +931,24 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
         <PhotoStorageModal
           classInfo={classInfo}
           onClose={() => setShowPhotoStorage(false)}
+        />
+      )}
+
+      {/* Unmatched Students Modal */}
+      {showUnmatched && (
+        <UnmatchedStudentsModal
+          classId={classInfo.id}
+          className={classInfo.name}
+          onClose={() => setShowUnmatched(false)}
+        />
+      )}
+
+      {/* Warning Students Modal */}
+      {showWarnings && (
+        <WarningStudentsModal
+          classId={classInfo.id}
+          className={classInfo.name}
+          onClose={() => setShowWarnings(false)}
         />
       )}
     </div>
