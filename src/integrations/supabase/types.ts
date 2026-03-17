@@ -14,33 +14,162 @@ export type Database = {
   }
   public: {
     Tables: {
-      face_images: {
+      assignments: {
         Row: {
-          created_at: string
-          face_descriptor: Json | null
-          file_size: number | null
+          class_id: string
+          description: string | null
+          feedback: string | null
+          file_url: string | null
+          grade: string | null
           id: string
-          image_url: string
-          name: string
-          user_id: string
+          student_id: string
+          submitted_at: string
+          title: string
         }
         Insert: {
-          created_at?: string
-          face_descriptor?: Json | null
-          file_size?: number | null
+          class_id: string
+          description?: string | null
+          feedback?: string | null
+          file_url?: string | null
+          grade?: string | null
           id?: string
-          image_url: string
-          name: string
-          user_id: string
+          student_id: string
+          submitted_at?: string
+          title: string
         }
         Update: {
-          created_at?: string
-          face_descriptor?: Json | null
-          file_size?: number | null
+          class_id?: string
+          description?: string | null
+          feedback?: string | null
+          file_url?: string | null
+          grade?: string | null
           id?: string
-          image_url?: string
+          student_id?: string
+          submitted_at?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignments_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      class_enrollments: {
+        Row: {
+          class_id: string
+          enrolled_at: string
+          id: string
+          status: string
+          student_id: string
+        }
+        Insert: {
+          class_id: string
+          enrolled_at?: string
+          id?: string
+          status?: string
+          student_id: string
+        }
+        Update: {
+          class_id?: string
+          enrolled_at?: string
+          id?: string
+          status?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "class_enrollments_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      classes: {
+        Row: {
+          class_type: Database["public"]["Enums"]["class_type"]
+          created_at: string
+          description: string | null
+          grade_level: string
+          id: string
+          is_active: boolean
+          max_students: number | null
+          name: string
+          price_per_session: number
+          subject_id: string | null
+          teaching_mode: Database["public"]["Enums"]["teaching_mode"]
+          tutor_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          class_type?: Database["public"]["Enums"]["class_type"]
+          created_at?: string
+          description?: string | null
+          grade_level: string
+          id?: string
+          is_active?: boolean
+          max_students?: number | null
+          name: string
+          price_per_session?: number
+          subject_id?: string | null
+          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
+          tutor_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          class_type?: Database["public"]["Enums"]["class_type"]
+          created_at?: string
+          description?: string | null
+          grade_level?: string
+          id?: string
+          is_active?: boolean
+          max_students?: number | null
           name?: string
-          user_id?: string
+          price_per_session?: number
+          subject_id?: string | null
+          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
+          tutor_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "classes_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          is_read: boolean
+          receiver_id: string
+          sender_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          receiver_id: string
+          sender_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          receiver_id?: string
+          sender_id?: string
         }
         Relationships: []
       }
@@ -48,28 +177,127 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
-          email: string | null
-          full_name: string | null
+          email: string
+          full_name: string
           id: string
+          phone: string | null
           updated_at: string
-          user_id: string
         }
         Insert: {
           avatar_url?: string | null
           created_at?: string
-          email?: string | null
-          full_name?: string | null
-          id?: string
+          email: string
+          full_name: string
+          id: string
+          phone?: string | null
           updated_at?: string
-          user_id: string
         }
         Update: {
           avatar_url?: string | null
           created_at?: string
-          email?: string | null
-          full_name?: string | null
+          email?: string
+          full_name?: string
           id?: string
+          phone?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      subjects: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      tutor_applications: {
+        Row: {
+          achievement_files: string[] | null
+          admin_notes: string | null
+          created_at: string
+          current_address: string
+          faculty: string
+          id: string
+          main_subject: string
+          school_name: string
+          status: Database["public"]["Enums"]["application_status"]
+          student_card_back: string
+          student_card_front: string
+          subjects_can_teach: string[]
+          teaching_areas: string[]
+          teaching_mode: Database["public"]["Enums"]["teaching_mode"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          achievement_files?: string[] | null
+          admin_notes?: string | null
+          created_at?: string
+          current_address: string
+          faculty: string
+          id?: string
+          main_subject: string
+          school_name: string
+          status?: Database["public"]["Enums"]["application_status"]
+          student_card_back: string
+          student_card_front: string
+          subjects_can_teach: string[]
+          teaching_areas: string[]
+          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          achievement_files?: string[] | null
+          admin_notes?: string | null
+          created_at?: string
+          current_address?: string
+          faculty?: string
+          id?: string
+          main_subject?: string
+          school_name?: string
+          status?: Database["public"]["Enums"]["application_status"]
+          student_card_back?: string
+          student_card_front?: string
+          subjects_can_teach?: string[]
+          teaching_areas?: string[]
+          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
           user_id?: string
         }
         Relationships: []
@@ -79,10 +307,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_first_user: { Args: never; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "tutor" | "student"
+      application_status: "pending" | "approved" | "rejected"
+      class_type: "group" | "one_on_one"
+      teaching_mode: "online" | "offline" | "both"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -209,6 +447,11 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "tutor", "student"],
+      application_status: ["pending", "approved", "rejected"],
+      class_type: ["group", "one_on_one"],
+      teaching_mode: ["online", "offline", "both"],
+    },
   },
 } as const

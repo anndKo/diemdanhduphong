@@ -178,7 +178,7 @@ const Dashboard = () => {
         .getPublicUrl(fileName);
 
       // Save to database
-      const { error: dbError } = await supabase.from('face_images').insert({
+      const { error: dbError } = await (supabase.from as any)('face_images').insert({
         user_id: user.id,
         name: imageName || selectedFile.name,
         image_url: urlData.publicUrl,
@@ -269,8 +269,7 @@ const Dashboard = () => {
       }
 
       // Delete from database
-      const { error } = await supabase
-        .from('face_images')
+      const { error } = await (supabase.from as any)('face_images')
         .delete()
         .eq('id', id);
 
