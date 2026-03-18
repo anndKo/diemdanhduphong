@@ -1,4 +1,4 @@
-import { useState, useCallback, lazy, Suspense } from "react";
+import { useState, useCallback, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,12 +46,26 @@ const DotsWave = () => (
 );
 
 /* ── Searching Modal ── */
+/* Trap tất cả pointer/touch/keyboard events — không cho xuyên qua overlay */
+const blockAll = (e: React.SyntheticEvent) => {
+  e.stopPropagation();
+  e.preventDefault();
+};
+
 const SearchingModal = ({ visible }: { visible: boolean }) => {
   if (!visible) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-[9999] flex items-center justify-center"
       style={{ backgroundColor: "hsl(var(--foreground) / 0.35)", backdropFilter: "blur(8px)" }}
+      /* Block mọi sự kiện chuột/chạm/bàn phím xuyên qua overlay */
+      onClickCapture={blockAll}
+      onPointerDownCapture={blockAll}
+      onPointerUpCapture={blockAll}
+      onTouchStartCapture={blockAll}
+      onTouchEndCapture={blockAll}
+      onKeyDownCapture={blockAll}
+      onMouseDownCapture={blockAll}
     >
       <div
         className="relative bg-card border border-border/60 rounded-3xl shadow-2xl px-10 py-10 flex flex-col items-center gap-6 w-[90vw] max-w-sm"
@@ -100,15 +114,19 @@ const Index = () => {
   const [attendanceCode, setAttendanceCode] = useState("");
   const [verifiedClass, setVerifiedClass] = useState<ClassData | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  // Ref guard: chặn tuyệt đối việc gọi lại khi đang xử lý
+  const isSearchingRef = useRef(false);
 
   const { getAveragePosition } = useGPS();
 
   const handleVerifyCode = useCallback(async () => {
+    if (isSearchingRef.current) return; // double-invoke guard
     if (attendanceCode.length !== 6) {
       toast.error("Mã điểm danh phải có 6 chữ số!");
       return;
     }
 
+    isSearchingRef.current = true;
     setIsSearching(true);
     try {
       const { data, error } = await supabase
@@ -164,6 +182,7 @@ const Index = () => {
       console.error("Error verifying code:", error);
       toast.error("Có lỗi xảy ra khi kiểm tra mã!");
     } finally {
+      isSearchingRef.current = false;
       setIsSearching(false);
     }
   }, [attendanceCode, getAveragePosition]);
