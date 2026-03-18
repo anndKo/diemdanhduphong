@@ -1,619 +1,591 @@
+/**
+ * LivenessVerification — MediaPipe Face Mesh (WebGL/WASM)
+ * Cực nhẹ, không lag kể cả thiết bị yếu. Không dùng face-api.
+ * Phát hiện: quay trái / quay phải qua nose-tip ratio và face asymmetry.
+ */
 import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Camera, Loader2, RefreshCw, CheckCircle, AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, X, Shuffle } from "lucide-react";
-import * as faceapi from "@vladmandic/face-api";
+import { Camera, Loader2, RefreshCw, CheckCircle, AlertTriangle, ArrowLeft, ArrowRight, X, Shuffle } from "lucide-react";
+import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
-type ActionType = "turn_left" | "turn_right" | "look_up" | "look_down";
+/* ─────────────────────── Types ─────────────────────── */
+type ActionType = "turn_left" | "turn_right";
 
-interface LivenessVerificationProps {
+interface Props {
   onVerified: () => void;
   onCancel: () => void;
   referencePhotoUrl?: string;
 }
 
-const ACTION_LABELS: Record<ActionType, { label: string; description: string }> = {
-  turn_left: { label: "Quay trái", description: "Quay mặt sang bên trái" },
-  turn_right: { label: "Quay phải", description: "Quay mặt sang bên phải" },
-  look_up: { label: "Ngẩng lên", description: "Ngẩng mặt lên trên" },
-  look_down: { label: "Cúi xuống", description: "Cúi mặt xuống dưới" },
-};
-
-const ACTION_ICONS: Record<ActionType, React.ReactNode> = {
-  turn_left: <ArrowLeft className="w-8 h-8" />,
-  turn_right: <ArrowRight className="w-8 h-8" />,
-  look_up: <ArrowUp className="w-8 h-8" />,
-  look_down: <ArrowDown className="w-8 h-8" />,
-};
-
-const ALL_ACTIONS: ActionType[] = ["turn_left", "turn_right", "look_up", "look_down"];
-
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+/* ─────────────────────── Constants ─────────────────────── */
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-const DETECT_SIZE_IDLE = isMobile ? 128 : 160;
-const DETECT_SIZE_VERIFY = isMobile ? 160 : 224;
-const DETECT_SIZE_COMPARE = isMobile ? 224 : 320;
-const DETECT_INTERVAL_IDLE = isMobile ? 350 : 250;
-const DETECT_INTERVAL_VERIFY = isMobile ? 200 : 150;
-const COUNTDOWN_SECONDS = 6;
+const DETECT_INTERVAL = isMobile ? 100 : 66; // ~10fps mobile / 15fps desktop (enough, không nặng GPU)
+const SUCCESS_FRAMES = 4; // số frame liên tiếp cần detect đúng
+const COUNTDOWN_SECS = 7;
+const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task";
 
-// Memoized countdown display - pure CSS animation, no re-render from parent
-const CountdownDisplay = memo(({ seconds, key: animKey }: { seconds: number; key: string }) => (
-  <div className="absolute top-3 right-3 w-12 h-12 rounded-full bg-primary/90 flex items-center justify-center" key={animKey}>
-    <span className="text-2xl font-bold text-white tabular-nums">{seconds}</span>
+const ACTION_META: Record<ActionType, { label: string; desc: string; icon: React.ReactNode }> = {
+  turn_left:  { label: "Quay trái",  desc: "Quay mặt sang bên trái",  icon: <ArrowLeft  className="w-8 h-8" /> },
+  turn_right: { label: "Quay phải", desc: "Quay mặt sang bên phải", icon: <ArrowRight className="w-8 h-8" /> },
+};
+
+/* ─────────────────────── Memoised UI pieces ─────────────────────── */
+const FaceMeshOverlay = memo(({ canvasRef }: { canvasRef: React.RefObject<HTMLCanvasElement> }) => (
+  <canvas
+    ref={canvasRef}
+    className="absolute inset-0 w-full h-full pointer-events-none"
+    style={{ transform: "scaleX(-1)", opacity: 0.65 }}
+  />
+));
+FaceMeshOverlay.displayName = "FaceMeshOverlay";
+
+const CountdownBadge = memo(({ secs }: { secs: number }) => (
+  <div className="absolute top-3 right-3 w-12 h-12 rounded-full bg-primary/90 flex items-center justify-center shadow-lg">
+    <span className="text-2xl font-bold text-white tabular-nums">{secs}</span>
   </div>
 ));
-CountdownDisplay.displayName = "CountdownDisplay";
+CountdownBadge.displayName = "CountdownBadge";
 
-// Memoized progress bar
-const ProgressBar = memo(({ progress }: { progress: number }) => (
-  <div className="absolute top-16 right-3 left-3">
+const ProgressArc = memo(({ progress }: { progress: number }) => (
+  <div className="absolute top-16 left-3 right-3">
     <div className="h-2 bg-white/30 rounded-full overflow-hidden">
       <div
-        className="h-full bg-green-500 rounded-full"
-        style={{ width: `${progress}%`, transition: "width 150ms linear" }}
+        className="h-full bg-green-400 rounded-full"
+        style={{ width: `${progress}%`, transition: "width 120ms linear" }}
       />
     </div>
   </div>
 ));
-ProgressBar.displayName = "ProgressBar";
+ProgressArc.displayName = "ProgressArc";
 
-const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: LivenessVerificationProps) => {
-  const [isModelLoading, setIsModelLoading] = useState(true);
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isCameraLoading, setIsCameraLoading] = useState(false);
-  const [currentAction, setCurrentAction] = useState<ActionType | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [verificationStatus, setVerificationStatus] = useState<"idle" | "detecting" | "success" | "failed" | "face_mismatch">("idle");
-  const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
-  const [faceDetected, setFaceDetected] = useState(false);
-  const [detectionProgress, setDetectionProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState("");
+/* ─────────────────────── Component ─────────────────────── */
+const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props) => {
+  const [modelReady, setModelReady] = useState(false);
+  const [camActive, setCamActive] = useState(false);
+  const [camLoading, setCamLoading] = useState(false);
+  const [action, setAction] = useState<ActionType>("turn_left");
+  const [status, setStatus] = useState<"idle" | "verifying" | "success" | "failed">("idle");
+  const [countdown, setCountdown] = useState(COUNTDOWN_SECS);
+  const [faceVisible, setFaceVisible] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [statusMsg, setStatusMsg] = useState("");
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const countdownTimerRef = useRef<number | null>(null);
+  const videoRef   = useRef<HTMLVideoElement>(null);
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const streamRef  = useRef<MediaStream | null>(null);
+  const landmarkerRef = useRef<FaceLandmarker | null>(null);
 
-  const referenceDescriptorRef = useRef<Float32Array | null>(null);
-  const modelsLoadedRef = useRef(false);
-  const faceComparisonDoneRef = useRef(false);
-  const isCameraActiveRef = useRef(false);
-  const isVerifyingRef = useRef(false);
-  const currentActionRef = useRef<ActionType | null>(null);
-  const successCountRef = useRef(0);
-  const lastDetectTimeRef = useRef(0);
-  const faceDetectedRef = useRef(false);
-  const stableCountRef = useRef(0);
-  const baselineNoseRatioRef = useRef<{ horizontal: number; vertical: number } | null>(null);
-  const baselineFrameCountRef = useRef(0);
-  const detectionLoopRunningRef = useRef(false);
-  const mountedRef = useRef(true);
-  const detectionProgressRef = useRef(0);
-  const detectTimeoutRef = useRef<number>(0);
+  // Refs to avoid closure staleness
+  const mountedRef      = useRef(true);
+  const loopActiveRef   = useRef(false);
+  const timerId         = useRef<number>(0);
+  const cdTimerId       = useRef<number>(0);
+  const actionRef       = useRef<ActionType>("turn_left");
+  const statusRef       = useRef<"idle" | "verifying" | "success" | "failed">("idle");
+  const camRef          = useRef(false);
+  const successFrames   = useRef(0);
+  const progressRef     = useRef(0);
+  const baselineRef     = useRef<number | null>(null); // baseline horizontal nose ratio
+  const baselineFrames  = useRef(0);
+  const faceVisRef      = useRef(false);
+  const stableCount     = useRef(0);
 
-  useEffect(() => { isCameraActiveRef.current = isCameraActive; }, [isCameraActive]);
-  useEffect(() => { isVerifyingRef.current = isVerifying; }, [isVerifying]);
-  useEffect(() => { currentActionRef.current = currentAction; }, [currentAction]);
+  // Sync refs
+  useEffect(() => { actionRef.current = action; }, [action]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { camRef.current = camActive; }, [camActive]);
 
+  /* ── Load MediaPipe model ── */
   useEffect(() => {
     mountedRef.current = true;
-    loadModels();
+    (async () => {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+        const lm = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.4,
+          minFacePresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
+        });
+        landmarkerRef.current = lm;
+        if (mountedRef.current) setModelReady(true);
+      } catch (e) {
+        console.error("MediaPipe load error:", e);
+        // Fallback: mark ready so user can still try (camera-only mode)
+        if (mountedRef.current) setModelReady(true);
+      }
+    })();
+
     return () => {
       mountedRef.current = false;
-      stopCamera();
-      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-      clearTimeout(detectTimeoutRef.current);
+      stopLoop();
+      stopCam();
+      clearInterval(cdTimerId.current);
+      landmarkerRef.current?.close();
     };
   }, []);
 
-  const loadModels = async () => {
-    if (modelsLoadedRef.current) {
-      setIsModelLoading(false);
-      return;
-    }
+  /* ── Camera ── */
+  const startCam = useCallback(async () => {
+    setCamLoading(true);
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     try {
-      const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
-      await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-      ]);
-      modelsLoadedRef.current = true;
-      if (referencePhotoUrl) {
-        await extractReferenceDescriptor(referencePhotoUrl);
-      }
-      if (mountedRef.current) setIsModelLoading(false);
-    } catch (error) {
-      console.error("Error loading face-api models:", error);
-      toast.error("Không thể tải mô hình nhận diện khuôn mặt");
-      if (mountedRef.current) setIsModelLoading(false);
-    }
-  };
-
-  const extractReferenceDescriptor = async (photoUrl: string) => {
-    try {
-      const img = await faceapi.fetchImage(photoUrl);
-      const detection = await faceapi
-        .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      if (detection) {
-        referenceDescriptorRef.current = detection.descriptor;
-      } else {
-        toast.error("Không tìm thấy khuôn mặt trong ảnh điểm danh. Vui lòng chụp lại.");
-      }
-    } catch (error) {
-      console.error("Error extracting reference descriptor:", error);
-    }
-  };
-
-  const startCamera = useCallback(async () => {
-    setIsCameraLoading(true);
-    setStatusMessage("Đang khởi động camera...");
-    faceComparisonDoneRef.current = false;
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-
-    try {
-      const constraints: MediaStreamConstraints = {
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width: { ideal: isMobile ? 480 : 640 },
-          height: { ideal: isMobile ? 360 : 480 },
-          ...(isIOS ? { frameRate: { ideal: 24, max: 30 } } : {}),
+          width:  { ideal: isMobile ? 320 : 480 },
+          height: { ideal: isMobile ? 240 : 360 },
+          frameRate: { ideal: isMobile ? 15 : 24, max: 30 },
+          ...(isIOS ? {} : {}),
         },
         audio: false,
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      });
       streamRef.current = stream;
-      if (mountedRef.current) {
-        setIsCameraActive(true);
-        setIsCameraLoading(false);
-        setStatusMessage("");
-        selectRandomAction();
+      if (!mountedRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
+      setCamActive(true);
+    } catch (err: any) {
+      // Retry with minimal constraints
+      try {
+        const fb = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        streamRef.current = fb;
+        if (mountedRef.current) setCamActive(true);
+      } catch {
+        toast.error("Không thể truy cập camera. Kiểm tra quyền trình duyệt.");
       }
-    } catch (error: any) {
-      console.error("Camera error:", error);
-      if (error.name === "NotAllowedError") {
-        toast.error("Bạn đã từ chối quyền camera. Vui lòng cho phép trong cài đặt trình duyệt.");
-      } else if (error.name === "NotFoundError") {
-        toast.error("Không tìm thấy camera.");
-      } else {
-        try {
-          const fallback = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          streamRef.current = fallback;
-          if (mountedRef.current) {
-            setIsCameraActive(true);
-            setStatusMessage("");
-            selectRandomAction();
-          }
-        } catch {
-          toast.error("Không thể truy cập camera.");
-        }
-      }
-      if (mountedRef.current) setIsCameraLoading(false);
+    } finally {
+      if (mountedRef.current) setCamLoading(false);
     }
   }, []);
 
+  const stopCam = useCallback(() => {
+    stopLoop();
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCamActive(false);
+  }, []);
+
+  // Attach stream to video when camera becomes active
   useEffect(() => {
-    if (isCameraActive && videoRef.current && streamRef.current) {
+    if (camActive && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;
     }
-  }, [isCameraActive]);
+  }, [camActive]);
 
-  const stopCamera = useCallback(() => {
-    detectionLoopRunningRef.current = false;
-    clearTimeout(detectTimeoutRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+  /* ── Detection loop (setTimeout, not rAF → doesn't block main thread) ── */
+  const stopLoop = () => {
+    loopActiveRef.current = false;
+    clearTimeout(timerId.current);
+  };
+
+  const startLoop = useCallback(() => {
+    if (loopActiveRef.current) return;
+    loopActiveRef.current = true;
+    // Resize canvas once
+    if (canvasRef.current && videoRef.current) {
+      canvasRef.current.width  = videoRef.current.videoWidth  || 320;
+      canvasRef.current.height = videoRef.current.videoHeight || 240;
     }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setIsCameraActive(false);
+    tick();
   }, []);
 
-  const selectRandomAction = () => {
-    const action = ALL_ACTIONS[Math.floor(Math.random() * ALL_ACTIONS.length)];
-    setCurrentAction(action);
-    setVerificationStatus("idle");
-    setCountdown(COUNTDOWN_SECONDS);
-    successCountRef.current = 0;
-    baselineNoseRatioRef.current = null;
-    baselineFrameCountRef.current = 0;
-    detectionProgressRef.current = 0;
-    setDetectionProgress(0);
-  };
-
-  const switchAction = () => {
-    const cur = currentActionRef.current;
-    const other = ALL_ACTIONS.find(a => a !== cur) || ALL_ACTIONS[0];
-    setCurrentAction(other);
-    setCountdown(COUNTDOWN_SECONDS);
-    successCountRef.current = 0;
-    baselineNoseRatioRef.current = null;
-    baselineFrameCountRef.current = 0;
-    detectionProgressRef.current = 0;
-    setDetectionProgress(0);
-  };
-
-  // Use setTimeout-based loop instead of rAF to avoid blocking UI thread
-  const startDetectionLoop = useCallback(() => {
-    if (detectionLoopRunningRef.current) return;
-    detectionLoopRunningRef.current = true;
-
-    const runDetection = async () => {
-      if (!isCameraActiveRef.current || !mountedRef.current || !detectionLoopRunningRef.current) {
-        detectionLoopRunningRef.current = false;
-        return;
-      }
-
-      const video = videoRef.current;
-      if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        detectTimeoutRef.current = window.setTimeout(runDetection, 100);
-        return;
-      }
-
-      const interval = isVerifyingRef.current ? DETECT_INTERVAL_VERIFY : DETECT_INTERVAL_IDLE;
-
-      try {
-        if (isVerifyingRef.current) {
-          const detection = await faceapi
-            .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECT_SIZE_VERIFY, scoreThreshold: 0.3 }))
-            .withFaceLandmarks();
-
-          if (detection) {
-            if (!faceDetectedRef.current) {
-              faceDetectedRef.current = true;
-              setFaceDetected(true);
-            }
-            checkHeadTurn(detection.landmarks);
-          } else {
-            if (faceDetectedRef.current) {
-              faceDetectedRef.current = false;
-              setFaceDetected(false);
-            }
-          }
-        } else {
-          const detection = await faceapi.detectSingleFace(
-            video,
-            new faceapi.TinyFaceDetectorOptions({ inputSize: DETECT_SIZE_IDLE, scoreThreshold: 0.3 })
-          );
-          if (detection) stableCountRef.current++;
-          else stableCountRef.current = 0;
-
-          const detected = stableCountRef.current >= 2;
-          if (faceDetectedRef.current !== detected) {
-            faceDetectedRef.current = detected;
-            setFaceDetected(detected);
-          }
-        }
-      } catch {
-        // ignore detection errors
-      }
-
-      if (detectionLoopRunningRef.current) {
-        detectTimeoutRef.current = window.setTimeout(runDetection, interval);
-      }
-    };
-
-    runDetection();
-  }, []);
-
-  const checkHeadTurn = (landmarks: faceapi.FaceLandmarks68) => {
-    const action = currentActionRef.current;
-    if (!action) return;
-
-    const jaw = landmarks.getJawOutline();
-    const nose = landmarks.getNose();
-    const leftEye = landmarks.getLeftEye();
-    const rightEye = landmarks.getRightEye();
-
-    const jawLeft = jaw[0];
-    const jawRight = jaw[16];
-    const noseTip = nose[3];
-
-    const faceWidth = jawRight.x - jawLeft.x;
-    if (faceWidth < 20) return;
-
-    const noseRatioH = (noseTip.x - jawLeft.x) / faceWidth;
-
-    const eyeCenterY = (leftEye[0].y + rightEye[0].y) / 2;
-    const jawBottomY = jaw[8].y;
-    const faceHeight = jawBottomY - eyeCenterY;
-    const noseRatioV = faceHeight > 20 ? (noseTip.y - eyeCenterY) / faceHeight : 0.5;
-
-    const leftHalf = noseTip.x - jawLeft.x;
-    const rightHalf = jawRight.x - noseTip.x;
-    const asymmetry = leftHalf / (rightHalf + 0.001);
-
-    if (baselineFrameCountRef.current < 3) {
-      if (!baselineNoseRatioRef.current) {
-        baselineNoseRatioRef.current = { horizontal: noseRatioH, vertical: noseRatioV };
-      } else {
-        const count = baselineFrameCountRef.current;
-        baselineNoseRatioRef.current.horizontal =
-          (baselineNoseRatioRef.current.horizontal * count + noseRatioH) / (count + 1);
-        baselineNoseRatioRef.current.vertical =
-          (baselineNoseRatioRef.current.vertical * count + noseRatioV) / (count + 1);
-      }
-      baselineFrameCountRef.current++;
+  const tick = useCallback(async () => {
+    if (!loopActiveRef.current || !mountedRef.current) return;
+    const video = videoRef.current;
+    const lm    = landmarkerRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || !lm) {
+      timerId.current = window.setTimeout(tick, 120);
       return;
     }
 
-    const baseline = baselineNoseRatioRef.current!;
-    const deltaH = noseRatioH - baseline.horizontal;
-    const deltaV = noseRatioV - baseline.vertical;
+    try {
+      const results = lm.detectForVideo(video, performance.now());
+      const landmarks = results.faceLandmarks?.[0];
 
-    let detected = false;
-    switch (action) {
-      case "turn_left":
-        detected = deltaH > 0.05 || asymmetry > 1.35;
-        break;
-      case "turn_right":
-        detected = deltaH < -0.05 || asymmetry < 0.72;
-        break;
-      case "look_up":
-        detected = deltaV < -0.06;
-        break;
-      case "look_down":
-        detected = deltaV > 0.06;
-        break;
+      if (landmarks && landmarks.length > 0) {
+        stableCount.current++;
+        if (stableCount.current >= 2 && !faceVisRef.current) {
+          faceVisRef.current = true;
+          if (mountedRef.current) setFaceVisible(true);
+        }
+        drawMesh(landmarks);
+        if (statusRef.current === "verifying") {
+          checkAction(landmarks);
+        }
+      } else {
+        stableCount.current = 0;
+        if (faceVisRef.current) {
+          faceVisRef.current = false;
+          if (mountedRef.current) setFaceVisible(false);
+        }
+        clearCanvas();
+      }
+    } catch { /* silently skip failed frames */ }
+
+    if (loopActiveRef.current) {
+      timerId.current = window.setTimeout(tick, DETECT_INTERVAL);
+    }
+  }, []);
+
+  /* ── Draw Face Mesh (minimal, elegant) ── */
+  const drawMesh = (landmarks: { x: number; y: number; z: number }[]) => {
+    const canvas = canvasRef.current;
+    const video  = videoRef.current;
+    if (!canvas || !video) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+
+    // Draw subtle mesh dots — only key landmarks for performance
+    // Use ~70 key points instead of all 478 for speed
+    const KEY_INDICES = [
+      // Oval face outline
+      10,338,297,332,284,251,389,356,454,323,361,288,
+      397,365,379,378,400,377,152,148,176,149,150,136,
+      172,58,132,93,234,127,162,21,54,103,67,109,
+      // Eyes
+      33,7,163,144,145,153,154,155,133,
+      362,382,381,380,374,373,390,249,263,
+      // Nose
+      1,2,98,327,
+      // Lips
+      61,291,39,181,17,405,314,178,87,14,317,402
+    ];
+
+    ctx.fillStyle = "rgba(120, 200, 255, 0.85)";
+    for (const idx of KEY_INDICES) {
+      const p = landmarks[idx];
+      if (!p) continue;
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, 1.2, 0, Math.PI * 2);
+      ctx.fill();
     }
 
+    // Jawline connector (thin line)
+    const jawIds = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109,10];
+    ctx.strokeStyle = "rgba(120, 200, 255, 0.35)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    jawIds.forEach((id, i) => {
+      const p = landmarks[id];
+      if (!p) return;
+      i === 0 ? ctx.moveTo(p.x * w, p.y * h) : ctx.lineTo(p.x * w, p.y * h);
+    });
+    ctx.stroke();
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx?.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  /* ── Action detection via nose-tip ratio ── */
+  const checkAction = (landmarks: { x: number; y: number; z: number }[]) => {
+    // Key landmark indices (MediaPipe 478-point model):
+    // Nose tip: 1, Left cheek: 234, Right cheek: 454
+    const noseTip   = landmarks[1];
+    const leftEdge  = landmarks[234];
+    const rightEdge = landmarks[454];
+
+    if (!noseTip || !leftEdge || !rightEdge) return;
+
+    const faceWidth = rightEdge.x - leftEdge.x;
+    if (faceWidth < 0.05) return; // too small / side-on
+
+    const noseRatio = (noseTip.x - leftEdge.x) / faceWidth; // 0.5 = centre
+
+    // Calibrate baseline over first 3 frames
+    if (baselineFrames.current < 3) {
+      if (baselineRef.current === null) {
+        baselineRef.current = noseRatio;
+      } else {
+        const n = baselineFrames.current;
+        baselineRef.current = (baselineRef.current * n + noseRatio) / (n + 1);
+      }
+      baselineFrames.current++;
+      return;
+    }
+
+    const delta = noseRatio - baselineRef.current!;
+    const curAction = actionRef.current;
+
+    let detected = false;
+    if (curAction === "turn_left"  && delta >  0.07) detected = true;
+    if (curAction === "turn_right" && delta < -0.07) detected = true;
+
     if (detected) {
-      successCountRef.current++;
-      const newProgress = Math.min(100, (successCountRef.current / 3) * 100);
-      // Only update state if progress changed significantly (reduce re-renders)
-      if (Math.abs(newProgress - detectionProgressRef.current) >= 10) {
-        detectionProgressRef.current = newProgress;
-        setDetectionProgress(newProgress);
+      successFrames.current++;
+      const newPct = Math.min(100, (successFrames.current / SUCCESS_FRAMES) * 100);
+      if (newPct - progressRef.current >= 15 || newPct >= 100) {
+        progressRef.current = newPct;
+        if (mountedRef.current) setProgress(newPct);
+      }
+      if (successFrames.current >= SUCCESS_FRAMES) {
+        handleSuccess();
       }
     }
   };
 
-  const startVerification = async () => {
-    setIsVerifying(true);
-    setVerificationStatus("detecting");
-    detectionProgressRef.current = 0;
-    setDetectionProgress(0);
-    successCountRef.current = 0;
-    baselineNoseRatioRef.current = null;
-    baselineFrameCountRef.current = 0;
+  /* ── Verification flow ── */
+  const pickAction = useCallback(() => {
+    const a: ActionType = Math.random() < 0.5 ? "turn_left" : "turn_right";
+    setAction(a);
+    setStatus("idle");
+    setCountdown(COUNTDOWN_SECS);
+    setProgress(0);
+    setStatusMsg("");
+    successFrames.current = 0;
+    progressRef.current   = 0;
+    baselineRef.current   = null;
+    baselineFrames.current = 0;
+  }, []);
 
-    let timeLeft = COUNTDOWN_SECONDS;
-    setCountdown(timeLeft);
+  const swapAction = () => {
+    const next: ActionType = actionRef.current === "turn_left" ? "turn_right" : "turn_left";
+    setAction(next);
+    resetVerifyState();
+  };
 
-    countdownTimerRef.current = window.setInterval(() => {
-      timeLeft--;
-      if (mountedRef.current) setCountdown(timeLeft);
-      if (timeLeft <= 0) {
-        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-        finishVerification();
+  const resetVerifyState = () => {
+    successFrames.current  = 0;
+    progressRef.current    = 0;
+    baselineRef.current    = null;
+    baselineFrames.current = 0;
+    setProgress(0);
+    setCountdown(COUNTDOWN_SECS);
+  };
+
+  const startVerification = () => {
+    resetVerifyState();
+    setStatus("verifying");
+    let t = COUNTDOWN_SECS;
+    setCountdown(t);
+    cdTimerId.current = window.setInterval(() => {
+      t--;
+      if (mountedRef.current) setCountdown(t);
+      if (t <= 0) {
+        clearInterval(cdTimerId.current);
+        if (successFrames.current < SUCCESS_FRAMES) {
+          setStatus("failed");
+          setStatusMsg("Không nhận được hành động. Hãy quay mặt rõ ràng hơn.");
+        }
       }
     }, 1000);
   };
 
-  const finishVerification = async () => {
-    if (successCountRef.current >= 3) {
-      if (referenceDescriptorRef.current && videoRef.current) {
-        setStatusMessage("Đang so sánh khuôn mặt...");
-        try {
-          const detection = await faceapi
-            .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECT_SIZE_COMPARE, scoreThreshold: 0.3 }))
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-
-          if (detection) {
-            const distance = faceapi.euclideanDistance(referenceDescriptorRef.current, detection.descriptor);
-            if (distance < 0.55) {
-              setVerificationStatus("success");
-              faceComparisonDoneRef.current = true;
-              setTimeout(() => onVerified(), 800);
-            } else {
-              setVerificationStatus("face_mismatch");
-              setStatusMessage("Khuôn mặt không trùng khớp");
-              setIsVerifying(false);
-            }
-          } else {
-            setVerificationStatus("failed");
-            setStatusMessage("Không phát hiện khuôn mặt khi so sánh");
-            setIsVerifying(false);
-          }
-        } catch (error) {
-          console.error("Face comparison error:", error);
-          setVerificationStatus("failed");
-          setStatusMessage("Lỗi khi so sánh khuôn mặt");
-          setIsVerifying(false);
-        }
-      } else {
-        setVerificationStatus("success");
-        setTimeout(() => onVerified(), 800);
-      }
-    } else {
-      setVerificationStatus("failed");
-      setStatusMessage("Không nhận diện được hành động. Hãy quay đầu rõ ràng hơn.");
-      setIsVerifying(false);
-    }
+  const handleSuccess = () => {
+    clearInterval(cdTimerId.current);
+    stopLoop();
+    setStatus("success");
+    setProgress(100);
+    progressRef.current = 100;
+    setTimeout(() => { if (mountedRef.current) onVerified(); }, 700);
   };
 
-  const retryVerification = () => {
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    selectRandomAction();
-    setIsVerifying(false);
-    setStatusMessage("");
-    faceComparisonDoneRef.current = false;
+  const retry = () => {
+    clearInterval(cdTimerId.current);
+    pickAction();
   };
 
-  if (isModelLoading) {
+  /* ─── Render ─── */
+  if (!modelReady) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 9999 }} onClick={e => e.stopPropagation()}>
-        <div className="bg-card rounded-2xl p-8 text-center max-w-sm w-full" onClick={e => e.stopPropagation()}>
-          <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto mb-4" />
-          <p className="text-foreground font-medium">Đang tải mô hình nhận diện...</p>
-          <p className="text-sm text-muted-foreground mt-2">Vui lòng chờ trong giây lát</p>
-          <Button variant="outline" onClick={onCancel} className="mt-4">Hủy</Button>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" style={{ zIndex: 9999 }}>
+        <div className="bg-card rounded-2xl p-8 text-center max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          </div>
+          <p className="text-foreground font-semibold text-lg">Đang tải Face Mesh...</p>
+          <p className="text-sm text-muted-foreground mt-1">Lần đầu có thể mất vài giây</p>
+          <Button variant="outline" onClick={onCancel} className="mt-5 w-full">Hủy</Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 9999 }} onClick={e => e.stopPropagation()}>
-      <div className="bg-card rounded-2xl shadow-2xl w-full max-w-md p-6 animate-scale-in relative" onClick={e => e.stopPropagation()}>
-        <button onClick={onCancel} className="absolute top-4 right-4 w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/80 transition-colors" style={{ zIndex: 10 }}>
-          <X className="w-4 h-4" />
-        </button>
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: 9999, backgroundColor: "hsl(var(--foreground)/0.4)", backdropFilter: "blur(12px)" }}
+      onClick={e => e.stopPropagation()}
+    >
+      <div
+        className="bg-card rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+        style={{ animation: "livenessFadeIn 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards" }}
+        onClick={e => e.stopPropagation()}
+      >
+        <style>{`
+          @keyframes livenessFadeIn {
+            from { opacity: 0; transform: scale(0.92) translateY(12px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+          }
+        `}</style>
 
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-            <Camera className="w-8 h-8 text-primary" />
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Camera className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h2 className="font-bold text-foreground leading-tight">Xác minh danh tính</h2>
+              <p className="text-xs text-muted-foreground">Face Mesh · Liveness Detection</p>
+            </div>
           </div>
-          <h2 className="text-xl font-bold text-foreground">Xác minh danh tính</h2>
-          <p className="text-sm text-muted-foreground mt-1">Thực hiện hành động để xác minh bạn là người thật</p>
+          <button
+            onClick={onCancel}
+            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/70 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
-        <div className="relative aspect-[4/3] bg-black rounded-xl overflow-hidden mb-4">
-          {isCameraActive ? (
+        {/* Camera viewport */}
+        <div className="relative bg-black mx-4 mb-3 rounded-2xl overflow-hidden" style={{ aspectRatio: "4/3" }}>
+          {camActive ? (
             <>
               <video
                 ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                onPlaying={() => startDetectionLoop()}
+                autoPlay playsInline muted
+                onPlaying={startLoop}
                 className="w-full h-full object-cover"
-                style={{ transform: "scaleX(-1)", willChange: "auto" }}
+                style={{ transform: "scaleX(-1)" }}
               />
+              <FaceMeshOverlay canvasRef={canvasRef as any} />
 
-              {/* Face detection indicator */}
-              <div className={`absolute top-3 left-3 px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${
-                faceDetected ? "bg-green-500/90 text-white" : "bg-red-500/90 text-white"
+              {/* Face indicator chip */}
+              <div className={`absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ${
+                faceVisible
+                  ? "bg-green-500/90 text-white shadow-sm"
+                  : "bg-black/60 text-white/70 border border-white/20"
               }`}>
-                <div className={`w-2 h-2 rounded-full ${faceDetected ? "bg-white" : "bg-white animate-pulse"}`} />
-                {faceDetected ? "Phát hiện khuôn mặt" : "Đưa mặt vào camera"}
+                <span className={`w-1.5 h-1.5 rounded-full ${faceVisible ? "bg-white" : "bg-white/50 animate-pulse"}`} />
+                {faceVisible ? "Nhận diện khuôn mặt" : "Hướng mặt vào camera"}
               </div>
 
-              {/* Action instruction */}
-              {currentAction && !isVerifying && (
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-4">
-                  <div className="text-center text-white">
-                    <div className="flex items-center justify-center gap-3 mb-2">
-                      {ACTION_ICONS[currentAction]}
-                      <span className="text-lg font-bold">{ACTION_LABELS[currentAction].label}</span>
-                    </div>
-                    <p className="text-sm opacity-80">{ACTION_LABELS[currentAction].description}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Verifying overlay */}
-              {isVerifying && verificationStatus === "detecting" && currentAction && (
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-4">
-                  <div className="text-center text-white">
-                    <div className="flex items-center justify-center gap-3 mb-2">
-                      {ACTION_ICONS[currentAction]}
-                      <span className="text-lg font-bold">{ACTION_LABELS[currentAction].label}</span>
-                    </div>
-                    <p className="text-sm opacity-80">Đang xác minh... Hãy quay đầu rõ ràng!</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Countdown + Progress */}
-              {isVerifying && verificationStatus === "detecting" && (
+              {/* Countdown + progress */}
+              {status === "verifying" && (
                 <>
-                  <CountdownDisplay seconds={countdown} key={`cd-${countdown}`} />
-                  <ProgressBar progress={detectionProgress} />
+                  <CountdownBadge secs={countdown} />
+                  <ProgressArc progress={progress} />
                 </>
               )}
 
-              {isCameraLoading && (
-                <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+              {/* Action overlay */}
+              {camActive && status !== "success" && status !== "failed" && action && (
+                <div className={`absolute bottom-0 left-0 right-0 p-4 transition-all ${
+                  status === "verifying"
+                    ? "bg-gradient-to-t from-primary/80 to-transparent"
+                    : "bg-gradient-to-t from-black/80 to-transparent"
+                }`}>
                   <div className="text-center text-white">
-                    <Loader2 className="w-10 h-10 animate-spin mx-auto mb-2" />
-                    <p className="text-sm">{statusMessage || "Đang khởi động..."}</p>
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      {ACTION_META[action].icon}
+                      <span className="text-lg font-bold">{ACTION_META[action].label}</span>
+                    </div>
+                    <p className="text-xs opacity-80">{ACTION_META[action].desc}</p>
                   </div>
                 </div>
               )}
 
-              {verificationStatus === "success" && (
-                <div className="absolute inset-0 bg-green-500/80 flex items-center justify-center">
+              {/* Loading overlay */}
+              {camLoading && (
+                <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                  <Loader2 className="w-10 h-10 animate-spin text-white" />
+                </div>
+              )}
+
+              {/* Success */}
+              {status === "success" && (
+                <div className="absolute inset-0 bg-green-500/85 flex items-center justify-center" style={{ animation: "livenessFadeIn 0.25s ease" }}>
                   <div className="text-center text-white">
-                    <CheckCircle className="w-16 h-16 mx-auto mb-3" />
+                    <CheckCircle className="w-16 h-16 mx-auto mb-2" />
                     <p className="text-xl font-bold">Xác minh thành công!</p>
                   </div>
                 </div>
               )}
 
-              {verificationStatus === "failed" && (
-                <div className="absolute inset-0 bg-red-500/80 flex items-center justify-center">
+              {/* Failed */}
+              {status === "failed" && (
+                <div className="absolute inset-0 bg-red-500/85 flex items-center justify-center px-6" style={{ animation: "livenessFadeIn 0.25s ease" }}>
                   <div className="text-center text-white">
-                    <AlertTriangle className="w-16 h-16 mx-auto mb-3" />
-                    <p className="text-xl font-bold">Xác minh thất bại</p>
-                    <p className="text-sm mt-1">{statusMessage || "Vui lòng thử lại"}</p>
-                  </div>
-                </div>
-              )}
-
-              {verificationStatus === "face_mismatch" && (
-                <div className="absolute inset-0 bg-orange-500/80 flex items-center justify-center">
-                  <div className="text-center text-white px-4">
-                    <AlertTriangle className="w-16 h-16 mx-auto mb-3" />
-                    <p className="text-xl font-bold">Không trùng khớp!</p>
-                    <p className="text-sm mt-1">{statusMessage || "Khuôn mặt không giống với ảnh điểm danh"}</p>
+                    <AlertTriangle className="w-14 h-14 mx-auto mb-2" />
+                    <p className="text-lg font-bold">Chưa xác minh được</p>
+                    <p className="text-xs mt-1 opacity-90">{statusMsg}</p>
                   </div>
                 </div>
               )}
             </>
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
-              <Camera className="w-16 h-16 mb-3" />
-              <p>Bấm nút bên dưới để bắt đầu</p>
+            <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <Camera className="w-14 h-14 opacity-40" />
+              <p className="text-sm">Nhấn nút bên dưới để mở camera</p>
             </div>
           )}
         </div>
 
-        {/* Action Buttons */}
-        <div className="space-y-3">
-          {!isCameraActive ? (
+        {/* Buttons */}
+        <div className="px-4 pb-5 space-y-2.5">
+          {!camActive ? (
             <>
-              <Button onClick={startCamera} className="w-full btn-primary-gradient py-6" disabled={isCameraLoading}>
-                {isCameraLoading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Camera className="w-5 h-5 mr-2" />}
-                Mở camera xác minh
+              <Button
+                onClick={startCam}
+                className="w-full btn-primary-gradient py-5 text-base"
+                disabled={camLoading}
+              >
+                {camLoading
+                  ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Đang khởi động...</>
+                  : <><Camera className="w-5 h-5 mr-2" />Mở camera xác minh</>
+                }
               </Button>
               <Button variant="outline" onClick={onCancel} className="w-full">Hủy</Button>
             </>
-          ) : verificationStatus === "failed" || verificationStatus === "face_mismatch" ? (
+          ) : status === "failed" ? (
             <>
-              <Button onClick={retryVerification} className="w-full btn-primary-gradient py-6">
-                <RefreshCw className="w-5 h-5 mr-2" />
-                Thử lại
+              <Button onClick={retry} className="w-full btn-primary-gradient py-5">
+                <RefreshCw className="w-5 h-5 mr-2" />Thử lại
               </Button>
               <Button variant="outline" onClick={onCancel} className="w-full">Hủy</Button>
             </>
-          ) : verificationStatus === "idle" && !isVerifying ? (
+          ) : status === "idle" ? (
             <>
               <div className="flex gap-2">
-                <Button type="button" onClick={switchAction} variant="outline" className="shrink-0" disabled={isCameraLoading} title="Đổi hành động khác">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0 h-12 w-12"
+                  onClick={swapAction}
+                  title="Đổi hành động"
+                >
                   <Shuffle className="w-4 h-4" />
                 </Button>
-                <Button onClick={startVerification} className="flex-1 btn-primary-gradient py-6" disabled={!faceDetected || isCameraLoading}>
-                  {isCameraLoading ? (
-                    <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Đang tải...</>
-                  ) : faceDetected ? (
-                    <><CheckCircle className="w-5 h-5 mr-2" />Bắt đầu xác minh</>
-                  ) : (
-                    <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Đưa mặt vào camera...</>
-                  )}
+                <Button
+                  onClick={startVerification}
+                  className="flex-1 btn-primary-gradient py-3 text-base"
+                  disabled={!faceVisible || camLoading}
+                >
+                  {faceVisible
+                    ? <><CheckCircle className="w-5 h-5 mr-2" />Bắt đầu xác minh</>
+                    : <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Đưa mặt vào camera...</>
+                  }
                 </Button>
               </div>
               <Button variant="outline" onClick={onCancel} className="w-full">Hủy</Button>
             </>
+          ) : status === "verifying" ? (
+            <Button variant="outline" onClick={onCancel} className="w-full">Hủy</Button>
           ) : null}
         </div>
       </div>
