@@ -14,43 +14,82 @@ export type Database = {
   }
   public: {
     Tables: {
-      assignments: {
+      account_requests: {
         Row: {
-          class_id: string
-          description: string | null
-          feedback: string | null
-          file_url: string | null
-          grade: string | null
+          admin_note: string | null
+          created_at: string
+          device_hash: string
+          email: string
           id: string
-          student_id: string
-          submitted_at: string
-          title: string
+          ip_address: string | null
+          phone: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
         }
         Insert: {
-          class_id: string
-          description?: string | null
-          feedback?: string | null
-          file_url?: string | null
-          grade?: string | null
+          admin_note?: string | null
+          created_at?: string
+          device_hash: string
+          email: string
           id?: string
-          student_id: string
-          submitted_at?: string
-          title: string
+          ip_address?: string | null
+          phone?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
         }
         Update: {
-          class_id?: string
-          description?: string | null
-          feedback?: string | null
-          file_url?: string | null
-          grade?: string | null
+          admin_note?: string | null
+          created_at?: string
+          device_hash?: string
+          email?: string
           id?: string
-          student_id?: string
-          submitted_at?: string
-          title?: string
+          ip_address?: string | null
+          phone?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      attendance_records: {
+        Row: {
+          bonus_points: number | null
+          class_id: string
+          created_at: string
+          group_number: string
+          id: string
+          name: string
+          photo_url: string | null
+          student_code: string
+          week_number: number
+        }
+        Insert: {
+          bonus_points?: number | null
+          class_id: string
+          created_at?: string
+          group_number: string
+          id?: string
+          name: string
+          photo_url?: string | null
+          student_code: string
+          week_number?: number
+        }
+        Update: {
+          bonus_points?: number | null
+          class_id?: string
+          created_at?: string
+          group_number?: string
+          id?: string
+          name?: string
+          photo_url?: string | null
+          student_code?: string
+          week_number?: number
         }
         Relationships: [
           {
-            foreignKeyName: "assignments_class_id_fkey"
+            foreignKeyName: "attendance_records_class_id_fkey"
             columns: ["class_id"]
             isOneToOne: false
             referencedRelation: "classes"
@@ -58,31 +97,49 @@ export type Database = {
           },
         ]
       }
-      class_enrollments: {
+      bonus_codes: {
         Row: {
           class_id: string
-          enrolled_at: string
+          code: string
+          created_at: string
+          created_by: string | null
           id: string
           status: string
-          student_id: string
+          used_at: string | null
+          used_by_code: string | null
+          used_by_group: string | null
+          used_by_name: string | null
+          week_number: number | null
         }
         Insert: {
           class_id: string
-          enrolled_at?: string
+          code: string
+          created_at?: string
+          created_by?: string | null
           id?: string
           status?: string
-          student_id: string
+          used_at?: string | null
+          used_by_code?: string | null
+          used_by_group?: string | null
+          used_by_name?: string | null
+          week_number?: number | null
         }
         Update: {
           class_id?: string
-          enrolled_at?: string
+          code?: string
+          created_at?: string
+          created_by?: string | null
           id?: string
           status?: string
-          student_id?: string
+          used_at?: string | null
+          used_by_code?: string | null
+          used_by_group?: string | null
+          used_by_name?: string | null
+          week_number?: number | null
         }
         Relationships: [
           {
-            foreignKeyName: "class_enrollments_class_id_fkey"
+            foreignKeyName: "bonus_codes_class_id_fkey"
             columns: ["class_id"]
             isOneToOne: false
             referencedRelation: "classes"
@@ -92,84 +149,241 @@ export type Database = {
       }
       classes: {
         Row: {
-          class_type: Database["public"]["Enums"]["class_type"]
+          admin_latitude: number | null
+          admin_longitude: number | null
+          advanced_verification: boolean | null
+          attendance_duration_minutes: number | null
+          attendance_started_at: string | null
+          bonus_points_enabled: boolean | null
+          code: string
           created_at: string
-          description: string | null
-          grade_level: string
+          created_by: string | null
+          current_week: number | null
           id: string
-          is_active: boolean
-          max_students: number | null
           name: string
-          price_per_session: number
-          subject_id: string | null
-          teaching_mode: Database["public"]["Enums"]["teaching_mode"]
-          tutor_id: string | null
+          weeks_count: number
+        }
+        Insert: {
+          admin_latitude?: number | null
+          admin_longitude?: number | null
+          advanced_verification?: boolean | null
+          attendance_duration_minutes?: number | null
+          attendance_started_at?: string | null
+          bonus_points_enabled?: boolean | null
+          code: string
+          created_at?: string
+          created_by?: string | null
+          current_week?: number | null
+          id?: string
+          name: string
+          weeks_count?: number
+        }
+        Update: {
+          admin_latitude?: number | null
+          admin_longitude?: number | null
+          advanced_verification?: boolean | null
+          attendance_duration_minutes?: number | null
+          attendance_started_at?: string | null
+          bonus_points_enabled?: boolean | null
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          current_week?: number | null
+          id?: string
+          name?: string
+          weeks_count?: number
+        }
+        Relationships: []
+      }
+      device_blocks: {
+        Row: {
+          block_count: number
+          blocked_until: string | null
+          created_at: string
+          device_hash: string
+          id: string
+          is_permanent: boolean
+          reason: string | null
           updated_at: string
         }
         Insert: {
-          class_type?: Database["public"]["Enums"]["class_type"]
+          block_count?: number
+          blocked_until?: string | null
           created_at?: string
-          description?: string | null
-          grade_level: string
+          device_hash: string
           id?: string
-          is_active?: boolean
-          max_students?: number | null
-          name: string
-          price_per_session?: number
-          subject_id?: string | null
-          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
-          tutor_id?: string | null
+          is_permanent?: boolean
+          reason?: string | null
           updated_at?: string
         }
         Update: {
-          class_type?: Database["public"]["Enums"]["class_type"]
+          block_count?: number
+          blocked_until?: string | null
           created_at?: string
-          description?: string | null
-          grade_level?: string
+          device_hash?: string
           id?: string
-          is_active?: boolean
-          max_students?: number | null
-          name?: string
-          price_per_session?: number
-          subject_id?: string | null
-          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
-          tutor_id?: string | null
+          is_permanent?: boolean
+          reason?: string | null
           updated_at?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "classes_subject_id_fkey"
-            columns: ["subject_id"]
-            isOneToOne: false
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
-      messages: {
+      device_fingerprints: {
+        Row: {
+          created_at: string
+          device_hash: string
+          id: string
+          ip_address: string | null
+          raw_components: Json | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_hash: string
+          id?: string
+          ip_address?: string | null
+          raw_components?: Json | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device_hash?: string
+          id?: string
+          ip_address?: string | null
+          raw_components?: Json | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      face_images: {
+        Row: {
+          created_at: string
+          face_descriptor: Json | null
+          file_size: number | null
+          id: string
+          image_url: string
+          name: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          face_descriptor?: Json | null
+          file_size?: number | null
+          id?: string
+          image_url: string
+          name: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          face_descriptor?: Json | null
+          file_size?: number | null
+          id?: string
+          image_url?: string
+          name?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      guides: {
         Row: {
           content: string
           created_at: string
+          created_by: string
           id: string
-          is_read: boolean
-          receiver_id: string
-          sender_id: string
+          image_urls: Json | null
+          sort_order: number
+          title: string
+          video_urls: Json | null
         }
         Insert: {
           content: string
           created_at?: string
+          created_by: string
           id?: string
-          is_read?: boolean
-          receiver_id: string
-          sender_id: string
+          image_urls?: Json | null
+          sort_order?: number
+          title: string
+          video_urls?: Json | null
         }
         Update: {
           content?: string
           created_at?: string
+          created_by?: string
           id?: string
-          is_read?: boolean
-          receiver_id?: string
-          sender_id?: string
+          image_urls?: Json | null
+          sort_order?: number
+          title?: string
+          video_urls?: Json | null
+        }
+        Relationships: []
+      }
+      login_attempts: {
+        Row: {
+          behavior_data: Json | null
+          created_at: string
+          device_hash: string
+          email: string | null
+          id: string
+          ip_address: string | null
+          success: boolean
+          user_agent: string | null
+        }
+        Insert: {
+          behavior_data?: Json | null
+          created_at?: string
+          device_hash: string
+          email?: string | null
+          id?: string
+          ip_address?: string | null
+          success?: boolean
+          user_agent?: string | null
+        }
+        Update: {
+          behavior_data?: Json | null
+          created_at?: string
+          device_hash?: string
+          email?: string | null
+          id?: string
+          ip_address?: string | null
+          success?: boolean
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
+      password_reset_requests: {
+        Row: {
+          created_at: string
+          device_hash: string
+          email: string
+          id: string
+          phone: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          device_hash: string
+          email: string
+          id?: string
+          phone?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          device_hash?: string
+          email?: string
+          id?: string
+          phone?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
         }
         Relationships: []
       }
@@ -177,128 +391,208 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
-          email: string
-          full_name: string
+          email: string | null
+          full_name: string | null
           id: string
-          phone: string | null
           updated_at: string
+          user_id: string
         }
         Insert: {
           avatar_url?: string | null
           created_at?: string
-          email: string
-          full_name: string
-          id: string
-          phone?: string | null
+          email?: string | null
+          full_name?: string | null
+          id?: string
           updated_at?: string
+          user_id: string
         }
         Update: {
           avatar_url?: string | null
           created_at?: string
-          email?: string
-          full_name?: string
+          email?: string | null
+          full_name?: string | null
           id?: string
-          phone?: string | null
           updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
-      subjects: {
+      protection_password_attempts: {
+        Row: {
+          attempt_count: number
+          blocked_until: string | null
+          created_at: string
+          device_hash: string
+          id: string
+          ip_address: string | null
+          last_attempt_at: string | null
+        }
+        Insert: {
+          attempt_count?: number
+          blocked_until?: string | null
+          created_at?: string
+          device_hash: string
+          id?: string
+          ip_address?: string | null
+          last_attempt_at?: string | null
+        }
+        Update: {
+          attempt_count?: number
+          blocked_until?: string | null
+          created_at?: string
+          device_hash?: string
+          id?: string
+          ip_address?: string | null
+          last_attempt_at?: string | null
+        }
+        Relationships: []
+      }
+      protection_passwords: {
         Row: {
           created_at: string
-          description: string | null
+          enabled: boolean
           id: string
-          name: string
+          password_hash: string
+          updated_at: string
+          user_id: string
         }
         Insert: {
           created_at?: string
-          description?: string | null
+          enabled?: boolean
           id?: string
-          name: string
+          password_hash: string
+          updated_at?: string
+          user_id: string
         }
         Update: {
           created_at?: string
-          description?: string | null
+          enabled?: boolean
+          id?: string
+          password_hash?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      security_logs: {
+        Row: {
+          action: string
+          created_at: string
+          details: Json | null
+          device_hash: string | null
+          id: string
+          ip_address: string | null
+          risk_score: number | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          details?: Json | null
+          device_hash?: string | null
+          id?: string
+          ip_address?: string | null
+          risk_score?: number | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          details?: Json | null
+          device_hash?: string | null
+          id?: string
+          ip_address?: string | null
+          risk_score?: number | null
+        }
+        Relationships: []
+      }
+      student_warnings: {
+        Row: {
+          class_id: string
+          created_at: string
+          group_number: string | null
+          id: string
+          photo_url: string | null
+          reason: string | null
+          student_code: string
+          student_name: string
+          week_number: number | null
+        }
+        Insert: {
+          class_id: string
+          created_at?: string
+          group_number?: string | null
+          id?: string
+          photo_url?: string | null
+          reason?: string | null
+          student_code: string
+          student_name: string
+          week_number?: number | null
+        }
+        Update: {
+          class_id?: string
+          created_at?: string
+          group_number?: string | null
+          id?: string
+          photo_url?: string | null
+          reason?: string | null
+          student_code?: string
+          student_name?: string
+          week_number?: number | null
+        }
+        Relationships: []
+      }
+      students: {
+        Row: {
+          class_id: string
+          created_at: string
+          group_number: string
+          id: string
+          name: string
+          student_code: string
+        }
+        Insert: {
+          class_id: string
+          created_at?: string
+          group_number: string
+          id?: string
+          name: string
+          student_code: string
+        }
+        Update: {
+          class_id?: string
+          created_at?: string
+          group_number?: string
           id?: string
           name?: string
+          student_code?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "students_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
-      tutor_applications: {
-        Row: {
-          achievement_files: string[] | null
-          admin_notes: string | null
-          created_at: string
-          current_address: string
-          faculty: string
-          id: string
-          main_subject: string
-          school_name: string
-          status: Database["public"]["Enums"]["application_status"]
-          student_card_back: string
-          student_card_front: string
-          subjects_can_teach: string[]
-          teaching_areas: string[]
-          teaching_mode: Database["public"]["Enums"]["teaching_mode"]
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          achievement_files?: string[] | null
-          admin_notes?: string | null
-          created_at?: string
-          current_address: string
-          faculty: string
-          id?: string
-          main_subject: string
-          school_name: string
-          status?: Database["public"]["Enums"]["application_status"]
-          student_card_back: string
-          student_card_front: string
-          subjects_can_teach: string[]
-          teaching_areas: string[]
-          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          achievement_files?: string[] | null
-          admin_notes?: string | null
-          created_at?: string
-          current_address?: string
-          faculty?: string
-          id?: string
-          main_subject?: string
-          school_name?: string
-          status?: Database["public"]["Enums"]["application_status"]
-          student_card_back?: string
-          student_card_front?: string
-          subjects_can_teach?: string[]
-          teaching_areas?: string[]
-          teaching_mode?: Database["public"]["Enums"]["teaching_mode"]
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      user_roles: {
+      teachers: {
         Row: {
           created_at: string
+          created_by: string | null
+          email: string
           id: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
         }
         Insert: {
           created_at?: string
+          created_by?: string | null
+          email: string
           id?: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
         }
         Update: {
           created_at?: string
+          created_by?: string | null
+          email?: string
           id?: string
-          role?: Database["public"]["Enums"]["app_role"]
-          user_id?: string
         }
         Relationships: []
       }
@@ -307,20 +601,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      has_role: {
-        Args: {
-          _role: Database["public"]["Enums"]["app_role"]
-          _user_id: string
-        }
+      admin_disable_protection_password: {
+        Args: { target_email: string }
         Returns: boolean
       }
-      is_first_user: { Args: never; Returns: boolean }
+      disable_protection_password: { Args: never; Returns: boolean }
+      is_protection_password_enabled: { Args: never; Returns: boolean }
+      set_protection_password: {
+        Args: { p_password: string }
+        Returns: boolean
+      }
+      verify_protection_password: {
+        Args: { p_password: string }
+        Returns: boolean
+      }
+      verify_protection_password_raw: {
+        Args: { p_hash: string; p_password: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      app_role: "admin" | "tutor" | "student"
-      application_status: "pending" | "approved" | "rejected"
-      class_type: "group" | "one_on_one"
-      teaching_mode: "online" | "offline" | "both"
+      [_ in never]: never
     }
     CompositeTypes: {
       [_ in never]: never
@@ -447,11 +748,6 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {
-      app_role: ["admin", "tutor", "student"],
-      application_status: ["pending", "approved", "rejected"],
-      class_type: ["group", "one_on_one"],
-      teaching_mode: ["online", "offline", "both"],
-    },
+    Enums: {},
   },
 } as const

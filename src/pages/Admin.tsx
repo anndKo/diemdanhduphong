@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, memo, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Plus, BookOpen, Users, Loader2, Copy, Trash2, Calendar, Clock, MapPin, Shield, Star, CalendarOff, BookPlus, HelpCircle } from "lucide-react";
+import { Plus, BookOpen, Users, Loader2, Copy, Trash2, Calendar, Clock, MapPin, Shield, Star, CalendarOff, BookPlus, HelpCircle, CheckCircle2 } from "lucide-react";
 import AdminSettingsMenu from "@/components/AdminSettingsMenu";
 import ClassBonusPointsModal from "@/components/ClassBonusPointsModal";
 import LeaveManagementModal from "@/components/LeaveManagementModal";
@@ -14,6 +15,8 @@ import ProtectionPasswordModal from "@/components/ProtectionPasswordModal";
 import CreateGuideModal from "@/components/CreateGuideModal";
 import GuidesListModal from "@/components/GuidesListModal";
 import WelcomeNotification from "@/components/WelcomeNotification";
+import AdvertisementManagementModal from "@/components/AdvertisementManagementModal";
+import ImageScanResultsModal from "@/components/ImageScanResultsModal";
 
 import useGPS from "@/hooks/useGPS";
 
@@ -88,14 +91,35 @@ const ClassCard = memo(({
 
 
 
-}: {classItem: ClassItem;remainingTime: string | null;isActive: boolean;isTimerTarget: boolean;timerWeek: string;timerMinutes: string;advancedVerification: boolean;isGettingGPS: boolean;onSelect: () => void;onCopyCode: () => void;onDelete: () => void;onStartAttendance: () => void;onStopAttendance: () => void;onSetTimerTarget: () => void;onCancelTimer: () => void;onTimerWeekChange: (v: string) => void;onTimerMinutesChange: (v: string) => void;onAdvancedChange: (v: boolean) => void;}) =>
+}: {classItem: ClassItem;remainingTime: string | null;isActive: boolean;isTimerTarget: boolean;timerWeek: string;timerMinutes: string;advancedVerification: boolean;isGettingGPS: boolean;onSelect: () => void;onCopyCode: () => void;onDelete: () => void;onStartAttendance: () => void;onStopAttendance: () => void;onSetTimerTarget: () => void;onCancelTimer: () => void;onTimerWeekChange: (v: string) => void;onTimerMinutesChange: (v: string) => void;onAdvancedChange: (v: boolean) => void;index?: number;}) => {
+const gradients = [
+  'from-violet-600/20 via-purple-500/10 to-fuchsia-500/5 border-violet-500/20',
+  'from-blue-600/20 via-cyan-500/10 to-teal-500/5 border-blue-500/20',
+  'from-emerald-600/20 via-green-500/10 to-lime-500/5 border-emerald-500/20',
+  'from-orange-600/20 via-amber-500/10 to-yellow-500/5 border-orange-500/20',
+  'from-rose-600/20 via-pink-500/10 to-red-500/5 border-rose-500/20',
+  'from-indigo-600/20 via-blue-500/10 to-sky-500/5 border-indigo-500/20',
+];
+const iconColors = [
+  'text-violet-500 bg-violet-500/15',
+  'text-blue-500 bg-blue-500/15',
+  'text-emerald-500 bg-emerald-500/15',
+  'text-orange-500 bg-orange-500/15',
+  'text-rose-500 bg-rose-500/15',
+  'text-indigo-500 bg-indigo-500/15',
+];
+const idx = (classItem.name.charCodeAt(0) + classItem.name.length) % gradients.length;
+const gradient = gradients[idx];
+const iconColor = iconColors[idx];
+
+return (
 <div
-  className="card-elevated p-4 md:p-5 cursor-pointer hover:shadow-xl transition-all duration-300 group"
+  className={`relative overflow-hidden rounded-2xl border p-4 md:p-5 cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all duration-300 group bg-gradient-to-br ${gradient}`}
   onClick={onSelect}>
   
     <div className="flex items-start justify-between mb-2 md:mb-3">
-      <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-        <BookOpen className="w-5 h-5 md:w-6 md:h-6 text-primary" />
+      <div className={`w-10 h-10 md:w-12 md:h-12 rounded-xl ${iconColor} flex items-center justify-center`}>
+        <BookOpen className="w-5 h-5 md:w-6 md:h-6" />
       </div>
       <div className="flex items-center gap-1 md:gap-2">
         <div className="px-2 py-1 bg-secondary text-secondary-foreground rounded-lg text-xs font-medium flex items-center gap-1">
@@ -150,8 +174,62 @@ const ClassCard = memo(({
           </Button>
         </div> :
     isTimerTarget ?
-    <div className="space-y-2">
-          <div className="flex items-center gap-1 md:gap-2">
+    <div className="space-y-2 relative">
+          {/* GPS Loading Overlay */}
+          <AnimatePresence>
+            {isGettingGPS && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+                className="absolute inset-0 z-10 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-2 py-3"
+                style={{
+                  background: "linear-gradient(135deg, hsl(var(--primary)/0.12) 0%, hsl(var(--primary)/0.06) 100%)",
+                  backdropFilter: "blur(6px)",
+                  border: "1px solid hsl(var(--primary)/0.25)",
+                }}
+              >
+                {/* Ripple rings */}
+                <div className="relative flex items-center justify-center w-10 h-10">
+                  {[0, 1, 2].map((i) => (
+                    <motion.div
+                      key={i}
+                      className="absolute rounded-full border border-primary/40"
+                      initial={{ width: 16, height: 16, opacity: 0.8 }}
+                      animate={{ width: 40, height: 40, opacity: 0 }}
+                      transition={{
+                        duration: 1.4,
+                        repeat: Infinity,
+                        delay: i * 0.45,
+                        ease: "easeOut",
+                      }}
+                    />
+                  ))}
+                  <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
+                    <MapPin className="w-4 h-4 text-primary" />
+                  </div>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs font-semibold text-primary leading-tight">Đang lấy vị trí GPS</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Vui lòng chờ...</p>
+                </div>
+                {/* Animated dots */}
+                <div className="flex gap-1">
+                  {[0, 1, 2].map((i) => (
+                    <motion.div
+                      key={i}
+                      className="w-1 h-1 rounded-full bg-primary"
+                      animate={{ opacity: [0.3, 1, 0.3] }}
+                      transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.25 }}
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className={`flex items-center gap-1 md:gap-2 transition-opacity duration-200 ${isGettingGPS ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
             <Input
           type="number"
           placeholder="T"
@@ -176,7 +254,7 @@ const ClassCard = memo(({
           className="btn-primary-gradient h-7 md:h-8 text-xs px-2 md:px-3"
           disabled={isGettingGPS}>
           
-              {isGettingGPS ? <MapPin className="w-3 h-3 animate-pulse" /> : "Bắt đầu"}
+              Bắt đầu
             </Button>
             <Button
           size="sm"
@@ -188,7 +266,7 @@ const ClassCard = memo(({
             </Button>
           </div>
           
-          <div className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
+          <div className={`flex items-center justify-between p-2 bg-muted/50 rounded-lg transition-opacity duration-200 ${isGettingGPS ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
             <Label className="text-xs flex items-center gap-1.5 cursor-pointer">
               <Shield className="w-3.5 h-3.5 text-primary" />
               <span>Nâng cao</span>
@@ -199,15 +277,15 @@ const ClassCard = memo(({
           className="scale-75" />
         
           </div>
-          {advancedVerification &&
+          {advancedVerification && !isGettingGPS &&
       <p className="text-xs text-primary">
               ✓ Yêu cầu xác minh khuôn mặt trước khi điểm danh
             </p>
       }
           
-          <p className="text-xs text-muted-foreground">
+          {!isGettingGPS && <p className="text-xs text-muted-foreground">
             Tuần: 1-{classItem.weeks_count}, Phút: 1-120
-          </p>
+          </p>}
         </div> :
 
     <Button
@@ -223,6 +301,7 @@ const ClassCard = memo(({
     </div>
   </div>
 );
+});
 
 ClassCard.displayName = "ClassCard";
 
@@ -266,6 +345,8 @@ const Admin = () => {
   const [showLeaveManagement, setShowLeaveManagement] = useState(false);
   const [showCreateGuide, setShowCreateGuide] = useState(false);
   const [showGuidesList, setShowGuidesList] = useState(false);
+  const [showManageAds, setShowManageAds] = useState(false);
+  const [showImageScan, setShowImageScan] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
 
   // Protection password state
@@ -282,7 +363,7 @@ const Admin = () => {
   // Timer tick - only updates a counter, not the classes array
   const [timerTick, setTimerTick] = useState(0);
 
-  const { getAveragePosition } = useGPS();
+  const { getAccuratePosition } = useGPS();
 
   useEffect(() => {
     checkAuth();
@@ -421,7 +502,7 @@ const Admin = () => {
     setIsGettingGPS(true);
     try {
       toast.info("Đang lấy vị trí GPS...");
-      const position = await getAveragePosition();
+      const position = await getAccuratePosition();
 
       const newCode = generateCode();
 
@@ -467,7 +548,7 @@ const Admin = () => {
     } finally {
       setIsGettingGPS(false);
     }
-  }, [timerMinutes, timerWeek, advancedVerification, classes, getAveragePosition]);
+  }, [timerMinutes, timerWeek, advancedVerification, classes, getAccuratePosition]);
 
   const handleStopAttendance = useCallback(async (classId: string) => {
     try {
@@ -629,6 +710,8 @@ const Admin = () => {
               onAccountRequests={() => setShowAccountRequests(true)}
               onSecurityManagement={() => setShowSecurityManagement(true)}
               onCreateGuide={() => setShowCreateGuide(true)}
+              onManageAds={() => setShowManageAds(true)}
+              onImageScan={() => setShowImageScan(true)}
               onLogout={handleLogout} />
             
           </div>
@@ -831,6 +914,14 @@ const Admin = () => {
 
       {showGuidesList &&
       <GuidesListModal onClose={() => setShowGuidesList(false)} isAdmin={isAdmin} />
+      }
+
+      {showManageAds && isAdmin &&
+      <AdvertisementManagementModal onClose={() => setShowManageAds(false)} />
+      }
+
+      {showImageScan && isAdmin &&
+      <ImageScanResultsModal onClose={() => setShowImageScan(false)} />
       }
     </div>);
 

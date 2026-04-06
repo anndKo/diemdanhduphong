@@ -451,7 +451,12 @@ function computeEdgeSharpnessVariance(imageData: ImageData, width: number, heigh
 }
 
 // ========================
-// Full Image Analysis
+// Yield to UI thread (prevents jank)
+// ========================
+const yieldToUI = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
+// ========================
+// Full Image Analysis (optimised: yield between heavy steps, small canvas for pixel ops)
 // ========================
 export async function analyzeImage(
   record: { student_code: string; name: string; week_number: number; photo_url: string },
@@ -459,36 +464,47 @@ export async function analyzeImage(
 ): Promise<ImageAnalysis> {
   onProgress?.('Tải ảnh...');
   const img = await loadImage(record.photo_url);
-  const { data: imageData, canvas } = getImageData(img, 256);
-  const w = canvas.width;
-  const h = canvas.height;
 
-  onProgress?.('Trích xuất EXIF...');
-  const exif = await extractExif(record.photo_url);
+  // 256px for hash/histogram/ELA (quality matters), 128px for heavy pixel ops (speed)
+  const { data: imageData256, canvas: canvas256 } = getImageData(img, 256);
+  const { data: imageData128, canvas: canvas128 } = getImageData(img, 128);
+  const w256 = canvas256.width;
+  const h256 = canvas256.height;
+  const w128 = canvas128.width;
+  const h128 = canvas128.height;
 
-  onProgress?.('Tính hash...');
+  // ── Fast sync ops (no yield needed) ──────────────────────
+  onProgress?.('Tính hash & histogram...');
   const pHash = computePHash(img);
   const dHash = computeDHash(img);
+  const histogram = computeHistogram(imageData256);
+  const brightness = computeBrightness(imageData256);
+  const contrast = computeContrast(imageData256);
 
-  onProgress?.('Phân tích histogram...');
-  const histogram = computeHistogram(imageData);
-  const brightness = computeBrightness(imageData);
-  const contrast = computeContrast(imageData);
+  // ── Yield before heavy CPU ops ────────────────────────────
+  await yieldToUI();
 
-  onProgress?.('Phân tích độ nét...');
-  const sharpness = computeSharpness(imageData, w, h);
+  onProgress?.('Phân tích pixel...');
+  const sharpness = computeSharpness(imageData128, w128, h128);
 
-  onProgress?.('Ước tính nhiễu...');
-  const noiseLevel = computeNoiseLevel(imageData, w, h);
+  await yieldToUI();
 
-  onProgress?.('Phân tích ELA...');
-  const elaScore = await computeELAAsync(img);
+  const noiseLevel = computeNoiseLevel(imageData128, w128, h128);
 
-  onProgress?.('Phát hiện Moiré...');
-  const moireScore = computeMoireScore(imageData, w, h);
+  await yieldToUI();
 
-  onProgress?.('Phân tích cạnh...');
-  const edgeSharpnessVariance = computeEdgeSharpnessVariance(imageData, w, h);
+  const moireScore = computeMoireScore(imageData128, w128, h128);
+
+  await yieldToUI();
+
+  const edgeSharpnessVariance = computeEdgeSharpnessVariance(imageData128, w128, h128);
+
+  // ── Async ops (EXIF fetch + ELA) — run concurrently ───────
+  onProgress?.('Phân tích EXIF & ELA...');
+  const [exif, elaScore] = await Promise.all([
+    extractExif(record.photo_url),
+    computeELAAsync(img),
+  ]);
 
   return {
     studentCode: record.student_code,

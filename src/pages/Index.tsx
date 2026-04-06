@@ -1,10 +1,10 @@
-import { useState, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, useCallback, useRef, lazy, Suspense, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { User, LogIn, CheckCircle, MapPin, AlertTriangle } from "lucide-react";
+import { User, LogIn, CheckCircle, MapPin, AlertTriangle, Search } from "lucide-react";
 import LoginModal from "@/components/LoginModal";
 import useGPS, { calculateDistance } from "@/hooks/useGPS";
 import BugReportModal from "@/components/BugReportModal";
@@ -117,7 +117,12 @@ const Index = () => {
   // Ref guard: chặn tuyệt đối việc gọi lại khi đang xử lý
   const isSearchingRef = useRef(false);
 
-  const { getAveragePosition } = useGPS();
+  const { getAccuratePosition, requestPermission } = useGPS();
+
+  // Request GPS permission immediately when page loads
+  useEffect(() => {
+    requestPermission();
+  }, [requestPermission]);
 
   const handleVerifyCode = useCallback(async () => {
     if (isSearchingRef.current) return; // double-invoke guard
@@ -152,7 +157,7 @@ const Index = () => {
         if (classData.admin_latitude && classData.admin_longitude) {
           toast.info("Đang xác minh vị trí của bạn...");
           try {
-            const userPosition = await getAveragePosition();
+            const userPosition = await getAccuratePosition();
             const distance = calculateDistance(
               classData.admin_latitude,
               classData.admin_longitude,
@@ -185,7 +190,7 @@ const Index = () => {
       isSearchingRef.current = false;
       setIsSearching(false);
     }
-  }, [attendanceCode, getAveragePosition]);
+  }, [attendanceCode, getAccuratePosition]);
 
   const handleAttendanceSuccess = useCallback(() => {
     setVerifiedClass(null);
@@ -203,31 +208,44 @@ const Index = () => {
   return (
     <div className="min-h-screen gradient-bg">
       {/* Header */}
-      <header className="w-full px-6 py-4 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <CheckCircle className="w-6 h-6 text-primary-foreground" />
+      <header className="w-full px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-2">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-primary flex items-center justify-center">
+              <CheckCircle className="w-5 h-5 sm:w-6 sm:h-6 text-primary-foreground" />
+            </div>
+            <h1 className="text-lg sm:text-xl font-bold text-foreground block truncate max-w-[150px] sm:max-w-none">Hệ Thống Điểm Danh</h1>
           </div>
-          <h1 className="text-xl font-bold text-foreground">Hệ Thống Điểm Danh</h1>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowBugReport(true)}
+              className="flex items-center gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10 h-8 sm:h-9 px-2.5 sm:px-3 text-xs sm:text-sm"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">Báo cáo lỗi</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowLogin(true)}
+              className="flex items-center gap-1.5 h-8 sm:h-9 px-2.5 sm:px-3 text-xs sm:text-sm"
+            >
+              <LogIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              Đăng nhập
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setShowBugReport(true)}
-            className="flex items-center gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
-          >
-            <AlertTriangle className="w-4 h-4" />
-            <span className="hidden sm:inline">Báo cáo lỗi</span>
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setShowLogin(true)}
-            className="flex items-center gap-2"
-          >
-            <LogIn className="w-4 h-4" />
-            Đăng nhập
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => navigate("/tracuudiemdanh")}
+          className="self-start flex items-center gap-2 ml-0.5 h-8 sm:h-9 px-3 sm:px-4 text-xs sm:text-sm border-primary/30 text-primary hover:bg-primary/10"
+        >
+          <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          Tra cứu điểm danh
+        </Button>
       </header>
 
       {/* Main Content */}
