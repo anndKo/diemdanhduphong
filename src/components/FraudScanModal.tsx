@@ -32,6 +32,8 @@ interface FraudScanModalProps {
   onClose: () => void;
 }
 
+const CONCURRENCY = 3; // số ảnh phân tích song song
+
 const FraudScanModal = ({ classInfo, onClose }: FraudScanModalProps) => {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [isLoadingRecords, setIsLoadingRecords] = useState(true);
@@ -95,7 +97,8 @@ const FraudScanModal = ({ classInfo, onClose }: FraudScanModalProps) => {
     return records.filter(r => selectedWeeks.has(r.week_number) && r.photo_url).length;
   }, [records, selectedWeeks]);
 
-  // Start scan
+  // Start scan — batch concurrency: 3 ảnh song song để tận dụng CPU tối đa
+
   const handleStartScan = useCallback(async () => {
     if (selectedWeeks.size === 0) {
       toast.error("Vui lòng chọn ít nhất 1 tuần!");
@@ -114,30 +117,40 @@ const FraudScanModal = ({ classInfo, onClose }: FraudScanModalProps) => {
     setViewMode('results');
 
     try {
-      const analyses = [];
-      for (let i = 0; i < photosToScan.length; i++) {
-        const r = photosToScan[i];
-        setCurrentScanInfo(`${r.name} - Tuần ${r.week_number} (${i + 1}/${photosToScan.length})`);
-        setScanProgress(Math.round(((i) / photosToScan.length) * 100));
+      const analyses: Awaited<ReturnType<typeof analyzeImage>>[] = new Array(photosToScan.length);
+      let completedCount = 0;
+      let activeNames: string[] = [];
 
-        try {
-          const analysis = await analyzeImage(r, (step) => {
-            setCurrentScanInfo(`${r.name} - ${step}`);
-          });
-          analyses.push(analysis);
-        } catch (err) {
-          console.error(`Error analyzing ${r.name}:`, err);
-        }
+      // Run in batches of CONCURRENCY
+      for (let batchStart = 0; batchStart < photosToScan.length; batchStart += CONCURRENCY) {
+        const batch = photosToScan.slice(batchStart, batchStart + CONCURRENCY);
 
-        // Yield to UI
-        await new Promise(r => setTimeout(r, 10));
+        // Update label to show names of current batch
+        activeNames = batch.map(r => r.name);
+        setCurrentScanInfo(`Đang quét: ${activeNames.join(', ')} (${completedCount}/${photosToScan.length})`);
+
+        await Promise.all(
+          batch.map(async (r, localIdx) => {
+            const globalIdx = batchStart + localIdx;
+            try {
+              analyses[globalIdx] = await analyzeImage(r);
+            } catch (err) {
+              console.error(`Error analyzing ${r.name}:`, err);
+            } finally {
+              completedCount++;
+              // Batch UI update: only update every item (avoid flooding setState)
+              setScanProgress(Math.round((completedCount / photosToScan.length) * 100));
+              setCurrentScanInfo(`Đã xong ${completedCount}/${photosToScan.length} ảnh`);
+            }
+          })
+        );
       }
 
       setScanProgress(100);
       setCurrentScanInfo("Đang phân tích kết quả...");
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 60));
 
-      const fraudResults = generateFraudResults(analyses);
+      const fraudResults = generateFraudResults(analyses.filter(Boolean));
       setResults(fraudResults);
 
       const highRisk = fraudResults.filter(r => r.riskLevel === 'high').length;

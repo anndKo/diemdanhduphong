@@ -7,7 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Settings, ShieldCheck, UserPlus, Key, LogOut, Menu, MessageSquareWarning, KeyRound, UserCheck, Shield, ShieldAlert, BookPlus } from "lucide-react";
+import { Settings, ShieldCheck, UserPlus, Key, LogOut, Menu, MessageSquareWarning, KeyRound, UserCheck, Shield, ShieldAlert, BookPlus, Megaphone, ScanSearch } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface AdminSettingsMenuProps {
@@ -21,6 +21,8 @@ interface AdminSettingsMenuProps {
   onAccountRequests?: () => void;
   onSecurityManagement?: () => void;
   onCreateGuide?: () => void;
+  onManageAds?: () => void;
+  onImageScan?: () => void;
   onLogout: () => void;
   isMobile?: boolean;
 }
@@ -52,6 +54,8 @@ const AdminSettingsMenu = ({
   onAccountRequests,
   onSecurityManagement,
   onCreateGuide,
+  onManageAds,
+  onImageScan,
   onLogout,
   isMobile = false,
 }: AdminSettingsMenuProps) => {
@@ -162,6 +166,20 @@ const AdminSettingsMenu = ({
           <DropdownMenuItem onClick={onCreateGuide} className="cursor-pointer">
             <BookPlus className="w-4 h-4 mr-2" />
             Tạo hướng dẫn
+          </DropdownMenuItem>
+        )}
+
+        {isAdmin && onManageAds && (
+          <DropdownMenuItem onClick={onManageAds} className="cursor-pointer">
+            <Megaphone className="w-4 h-4 mr-2" />
+            Quảng cáo
+          </DropdownMenuItem>
+        )}
+
+        {isAdmin && onImageScan && (
+          <DropdownMenuItem onClick={onImageScan} className="cursor-pointer">
+            <ScanSearch className="w-4 h-4 mr-2" />
+            Quét ảnh kho lưu trữ
           </DropdownMenuItem>
         )}
         

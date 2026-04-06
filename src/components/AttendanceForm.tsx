@@ -10,6 +10,7 @@ import { X, Camera, User, Hash, Users, Loader2, RefreshCw, Calendar, Star, Shiel
 import { z } from "zod";
 import { normalizeName, compareNames, compareStrings } from "@/lib/nameUtils";
 import LivenessVerification from "./LivenessVerification";
+import AttendanceSuccessAd from "./AttendanceSuccessAd";
 
 const attendanceSchema = z.object({
   name: z.string().min(2, "Tên phải có ít nhất 2 ký tự").max(100, "Tên quá dài"),
@@ -80,6 +81,8 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
   const [isLoading, setIsLoading] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
+  const [showSuccessAd, setShowSuccessAd] = useState(false);
+  const [submittedName, setSubmittedName] = useState("");
   
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [students, setStudents] = useState<Student[]>([]);
@@ -232,8 +235,12 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       setPhotoData(dataUrl);
       stopCamera();
       toast.success("Đã chụp ảnh!");
+      // Auto-open liveness verification if required
+      if (requiresVerification) {
+        setTimeout(() => setShowLivenessVerification(true), 100);
+      }
     }
-  }, [stopCamera]);
+  }, [stopCamera, requiresVerification]);
 
   const retakePhoto = useCallback(() => {
     setPhotoData(null);
@@ -497,7 +504,10 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       }
     }
 
-      onSuccess();
+      // Show success + ad overlay — do NOT call onSuccess() yet (keeps form alive for overlay)
+      setSubmittedName(normalizeName(name));
+      setShowSuccessAd(true);
+      // onSuccess is intentionally NOT called here; overlay is permanent (reload to close)
     } catch (error) {
       
       toast.error("Có lỗi xảy ra khi lưu điểm danh! Vui lòng thử lại.");
@@ -871,6 +881,11 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
           }}
           onCancel={() => setShowLivenessVerification(false)}
         />
+      )}
+
+      {/* Success + Ad overlay — shown after successful submit, cannot be closed */}
+      {showSuccessAd && (
+        <AttendanceSuccessAd studentName={submittedName} />
       )}
     </div>
   );

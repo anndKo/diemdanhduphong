@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import PhotoViewModal from "@/components/PhotoViewModal";
 import PhotoStorageModal from "@/components/PhotoStorageModal";
 import UnmatchedStudentsModal from "@/components/UnmatchedStudentsModal";
@@ -90,6 +91,8 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
   const [studentSearch, setStudentSearch] = useState(""); // Search for student list
   const [showImportSection, setShowImportSection] = useState(false); // Collapsible import
   const [showDuplicates, setShowDuplicates] = useState(false); // Show duplicate attendance
+  const [deleteStudentId, setDeleteStudentId] = useState<string | null>(null);
+  const [deleteAttendanceId, setDeleteAttendanceId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Search filter for students list
@@ -662,7 +665,7 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                                   variant="ghost"
                                   size="icon"
                                   className="h-8 w-8"
-                                  onClick={() => handleDeleteStudent(student.id)}
+                                  onClick={() => setDeleteStudentId(student.id)}
                                 >
                                   <Trash2 className="w-4 h-4 text-destructive" />
                                 </Button>
@@ -821,7 +824,7 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                                         <Button
                                           variant="ghost"
                                           size="icon"
-                                          onClick={() => handleDeleteAttendance(record.id)}
+                                          onClick={() => setDeleteAttendanceId(record.id)}
                                         >
                                           <Trash2 className="w-4 h-4 text-destructive" />
                                         </Button>
@@ -892,7 +895,7 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => handleDeleteAttendance(record.id)}
+                                  onClick={() => setDeleteAttendanceId(record.id)}
                                 >
                                   <Trash2 className="w-4 h-4 text-destructive" />
                                 </Button>
@@ -951,6 +954,47 @@ const ClassDetailModal = ({ classInfo, onClose }: ClassDetailModalProps) => {
           onClose={() => setShowWarnings(false)}
         />
       )}
+      {/* Delete Student Confirmation */}
+      <AlertDialog open={!!deleteStudentId} onOpenChange={(open) => !open && setDeleteStudentId(null)}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Xác nhận xóa sinh viên</AlertDialogTitle>
+            <AlertDialogDescription>
+              Bạn có chắc chắn muốn xóa sinh viên này? Hành động này không thể hoàn tác.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Hủy</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (deleteStudentId) { handleDeleteStudent(deleteStudentId); setDeleteStudentId(null); } }}
+            >
+              Xóa
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Attendance Confirmation */}
+      <AlertDialog open={!!deleteAttendanceId} onOpenChange={(open) => !open && setDeleteAttendanceId(null)}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Xác nhận xóa bản ghi điểm danh</AlertDialogTitle>
+            <AlertDialogDescription>
+              Bạn có chắc chắn muốn xóa bản ghi điểm danh này? Hành động này không thể hoàn tác.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Hủy</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (deleteAttendanceId) { handleDeleteAttendance(deleteAttendanceId); setDeleteAttendanceId(null); } }}
+            >
+              Xóa
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
