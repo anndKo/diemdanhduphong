@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,29 @@ interface ClassInfo {
   weeks_count?: number;
 }
 
+/* ─── 3D tilt on mouse move ─── */
+function use3DTilt(ref: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const handle = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width - 0.5;
+      const y = (e.clientY - rect.top) / rect.height - 0.5;
+      el.style.transform = `perspective(800px) rotateY(${x * 8}deg) rotateX(${-y * 6}deg) scale3d(1.02,1.02,1.02)`;
+    };
+    const reset = () => {
+      el.style.transform = "perspective(800px) rotateY(0) rotateX(0) scale3d(1,1,1)";
+    };
+    el.addEventListener("mousemove", handle);
+    el.addEventListener("mouseleave", reset);
+    return () => {
+      el.removeEventListener("mousemove", handle);
+      el.removeEventListener("mouseleave", reset);
+    };
+  }, [ref]);
+}
+
 const TraCuuDiemDanh = () => {
   const navigate = useNavigate();
   const [studentCode, setStudentCode] = useState("");
@@ -30,13 +53,13 @@ const TraCuuDiemDanh = () => {
   const [searched, setSearched] = useState(false);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
+  const searchCardRef = useRef<HTMLDivElement>(null);
+
+  use3DTilt(searchCardRef);
 
   const handleSearch = useCallback(async () => {
     const code = studentCode.trim();
-    if (!code) {
-      toast.error("Vui lòng nhập mã sinh viên!");
-      return;
-    }
+    if (!code) { toast.error("Vui lòng nhập mã sinh viên!"); return; }
     setLoading(true);
     setSearched(false);
     try {
@@ -45,34 +68,19 @@ const TraCuuDiemDanh = () => {
         .select("id, class_id, name, student_code, week_number, created_at")
         .eq("student_code", code)
         .order("created_at", { ascending: true });
-
       if (attErr) throw attErr;
-
       const recs = (attendanceData || []) as unknown as AttendanceRecord[];
       setRecords(recs);
-
       const classIds = [...new Set(recs.map((r) => r.class_id))];
-
       if (classIds.length > 0) {
         const { data: classData } = await supabase
-          .from("classes" as any)
-          .select("id, name, weeks_count")
-          .in("id", classIds);
+          .from("classes" as any).select("id, name, weeks_count").in("id", classIds);
         setClasses((classData || []) as unknown as ClassInfo[]);
-      } else {
-        setClasses([]);
-      }
-
+      } else { setClasses([]); }
       setSearched(true);
-      if (recs.length === 0) {
-        toast.info("Không tìm thấy dữ liệu điểm danh cho mã sinh viên này.");
-      }
-    } catch (err) {
-      console.error("Search error:", err);
-      toast.error("Có lỗi xảy ra khi tra cứu!");
-    } finally {
-      setLoading(false);
-    }
+      if (recs.length === 0) toast.info("Không tìm thấy dữ liệu điểm danh cho mã sinh viên này.");
+    } catch { toast.error("Có lỗi xảy ra khi tra cứu!"); }
+    finally { setLoading(false); }
   }, [studentCode]);
 
   const handleCodeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -91,52 +99,128 @@ const TraCuuDiemDanh = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      {/* Animated background */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div
-          className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] opacity-[0.03]"
-          style={{
-            backgroundImage: `radial-gradient(circle at 30% 40%, hsl(var(--primary)) 0%, transparent 50%),
-                              radial-gradient(circle at 70% 60%, hsl(var(--accent)) 0%, transparent 50%)`,
-            animation: "bgFloat 20s ease-in-out infinite alternate",
-          }}
-        />
+      {/* ── Animated 3D background scene ── */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        {/* Floating orbs */}
+        <div className="orb orb-1" />
+        <div className="orb orb-2" />
+        <div className="orb orb-3" />
+        {/* Grid plane */}
+        <div className="perspective-grid" />
       </div>
 
       <style>{`
-        @keyframes bgFloat {
-          0% { transform: translate(0, 0) rotate(0deg); }
-          100% { transform: translate(-5%, -3%) rotate(3deg); }
+        /* ── Floating orbs ── */
+        .orb {
+          position: absolute;
+          border-radius: 50%;
+          filter: blur(80px);
+          will-change: transform;
+          animation: orbFloat 12s ease-in-out infinite alternate;
         }
-        @keyframes cardEnter {
-          from { opacity: 0; transform: translateY(30px) perspective(800px) rotateX(5deg); }
-          to { opacity: 1; transform: translateY(0) perspective(800px) rotateX(0deg); }
+        .orb-1 {
+          width: 400px; height: 400px;
+          top: -10%; left: -5%;
+          background: hsl(var(--primary) / 0.12);
+          animation-duration: 14s;
         }
-        @keyframes heroEnter {
-          from { opacity: 0; transform: scale(0.95) translateY(-20px); }
-          to { opacity: 1; transform: scale(1) translateY(0); }
+        .orb-2 {
+          width: 300px; height: 300px;
+          bottom: 10%; right: -8%;
+          background: hsl(var(--accent) / 0.10);
+          animation-duration: 18s;
+          animation-delay: -4s;
         }
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(24px); }
-          to { opacity: 1; transform: translateY(0); }
+        .orb-3 {
+          width: 200px; height: 200px;
+          top: 50%; left: 40%;
+          background: hsl(var(--primary) / 0.06);
+          animation-duration: 10s;
+          animation-delay: -2s;
         }
-        @keyframes shimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
+        @keyframes orbFloat {
+          0%   { transform: translate(0, 0) scale(1); }
+          50%  { transform: translate(30px, -40px) scale(1.1); }
+          100% { transform: translate(-20px, 20px) scale(0.95); }
         }
-        .card-3d {
+
+        /* ── Perspective grid ── */
+        .perspective-grid {
+          position: absolute;
+          bottom: -20%;
+          left: -10%;
+          width: 120%;
+          height: 60%;
+          background:
+            linear-gradient(90deg, hsl(var(--primary) / 0.04) 1px, transparent 1px),
+            linear-gradient(180deg, hsl(var(--primary) / 0.04) 1px, transparent 1px);
+          background-size: 60px 60px;
+          transform: perspective(500px) rotateX(55deg);
+          mask-image: linear-gradient(to top, black 20%, transparent 80%);
+          -webkit-mask-image: linear-gradient(to top, black 20%, transparent 80%);
+          animation: gridSlide 20s linear infinite;
+        }
+        @keyframes gridSlide {
+          0%   { background-position: 0 0; }
+          100% { background-position: 0 60px; }
+        }
+
+        /* ── Card animations ── */
+        @keyframes heroFloat {
+          from { opacity: 0; transform: perspective(800px) translateZ(-60px) translateY(-30px) rotateX(8deg); }
+          to   { opacity: 1; transform: perspective(800px) translateZ(0) translateY(0) rotateX(0); }
+        }
+        @keyframes cardReveal {
+          from { opacity: 0; transform: perspective(600px) translateY(40px) rotateX(6deg) scale(0.96); }
+          to   { opacity: 1; transform: perspective(600px) translateY(0) rotateX(0) scale(1); }
+        }
+        @keyframes badgePop {
+          from { opacity: 0; transform: scale(0.6); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes iconSpin3D {
+          from { transform: perspective(400px) rotateY(0deg); }
+          to   { transform: perspective(400px) rotateY(360deg); }
+        }
+
+        .tilt-card {
+          transform-style: preserve-3d;
+          transition: transform 0.25s cubic-bezier(0.33, 1, 0.68, 1), box-shadow 0.25s ease;
+        }
+        .result-card {
           transform-style: preserve-3d;
           transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
-        .card-3d:hover {
-          transform: translateY(-4px) perspective(800px) rotateX(1deg);
+        .result-card:hover {
+          transform: translateY(-6px) perspective(800px) rotateX(2deg);
+          box-shadow: 0 20px 40px -12px hsl(var(--primary) / 0.15), 0 0 0 1px hsl(var(--primary) / 0.1);
         }
-        .week-cell {
-          transition: all 0.2s ease;
+        .week-cell-3d {
+          transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+          transform-style: preserve-3d;
         }
-        .week-cell:hover {
-          transform: scale(1.08);
+        .week-cell-3d:hover {
+          transform: translateZ(8px) scale(1.12);
           z-index: 10;
+        }
+
+        .shimmer-border {
+          position: relative;
+          overflow: hidden;
+        }
+        .shimmer-border::before {
+          content: '';
+          position: absolute;
+          top: -1px; left: -1px; right: -1px; bottom: -1px;
+          border-radius: inherit;
+          background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.2), transparent);
+          background-size: 200% 100%;
+          animation: shimmerMove 3s ease-in-out infinite;
+          z-index: -1;
+        }
+        @keyframes shimmerMove {
+          0%   { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
         }
       `}</style>
 
@@ -145,22 +229,17 @@ const TraCuuDiemDanh = () => {
         className="relative w-full px-6 py-4 flex items-center gap-3 border-b border-border/40"
         style={{
           background: "linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%)",
-          backdropFilter: "blur(12px)",
-          animation: "heroEnter 0.4s ease-out",
+          backdropFilter: "blur(16px)",
+          animation: "heroFloat 0.5s ease-out",
         }}
       >
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate("/")}
-          className="shrink-0 rounded-xl hover:bg-primary/10"
-        >
+        <Button variant="ghost" size="icon" onClick={() => navigate("/")} className="shrink-0 rounded-xl hover:bg-primary/10">
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex items-center gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shadow-md"
-            style={{ background: "var(--gradient-primary)" }}
+            style={{ background: "var(--gradient-primary)", animation: "iconSpin3D 8s linear infinite" }}
           >
             <Search className="w-5 h-5 text-primary-foreground" />
           </div>
@@ -171,18 +250,17 @@ const TraCuuDiemDanh = () => {
       {/* Main */}
       <main className="relative flex flex-col items-center px-4 sm:px-6 py-8 sm:py-12">
         {/* Hero */}
-        <div
-          className="text-center mb-8"
-          style={{ animation: "heroEnter 0.5s ease-out" }}
-        >
+        <div className="text-center mb-8" style={{ animation: "heroFloat 0.6s ease-out 0.1s both" }}>
           <div
-            className="w-20 h-20 mx-auto mb-5 rounded-2xl flex items-center justify-center shadow-lg"
-            style={{
-              background: "var(--gradient-primary)",
-              transform: "perspective(400px) rotateY(-8deg)",
-            }}
+            className="w-20 h-20 mx-auto mb-5 rounded-2xl flex items-center justify-center shadow-lg relative"
+            style={{ background: "var(--gradient-primary)" }}
           >
             <GraduationCap className="w-10 h-10 text-primary-foreground" />
+            {/* Glow ring */}
+            <div className="absolute inset-0 rounded-2xl" style={{
+              boxShadow: "0 0 30px 8px hsl(var(--primary) / 0.2)",
+              animation: "orbFloat 4s ease-in-out infinite alternate",
+            }} />
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-3 text-balance">
             Tra Cứu Điểm Danh
@@ -192,13 +270,14 @@ const TraCuuDiemDanh = () => {
           </p>
         </div>
 
-        {/* Search card */}
+        {/* Search card — 3D tilt */}
         <div
-          className="card-3d w-full max-w-md rounded-2xl border border-border/50 p-6 mb-8"
+          ref={searchCardRef}
+          className="tilt-card shimmer-border w-full max-w-md rounded-2xl border border-border/50 p-6 mb-8"
           style={{
             background: "linear-gradient(145deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%)",
-            boxShadow: "var(--shadow-elevated), inset 0 1px 0 hsl(0 0% 100% / 0.1)",
-            animation: "cardEnter 0.5s ease-out 0.1s both",
+            boxShadow: "0 16px 48px -8px hsl(var(--primary) / 0.1), 0 0 0 1px hsl(var(--border) / 0.3)",
+            animation: "cardReveal 0.6s ease-out 0.15s both",
           }}
         >
           <div className="space-y-4">
@@ -225,15 +304,9 @@ const TraCuuDiemDanh = () => {
               style={{ background: "var(--gradient-primary)" }}
             >
               {loading ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  Đang tra cứu...
-                </>
+                <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Đang tra cứu...</>
               ) : (
-                <>
-                  <Search className="w-5 h-5 mr-2" />
-                  Tra cứu
-                </>
+                <><Search className="w-5 h-5 mr-2" />Tra cứu</>
               )}
             </Button>
           </div>
@@ -242,11 +315,11 @@ const TraCuuDiemDanh = () => {
         {/* Student name card */}
         {searched && records.length > 0 && (
           <div
-            className="w-full max-w-md mb-6 rounded-2xl border border-border/50 p-4 flex items-center gap-4"
+            className="result-card w-full max-w-md mb-6 rounded-2xl border border-border/50 p-4 flex items-center gap-4"
             style={{
               background: "linear-gradient(145deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%)",
-              boxShadow: "var(--shadow-card)",
-              animation: "slideUp 0.3s ease-out",
+              boxShadow: "0 8px 32px -6px hsl(var(--primary) / 0.08)",
+              animation: "cardReveal 0.4s ease-out",
             }}
           >
             <div
@@ -259,7 +332,7 @@ const TraCuuDiemDanh = () => {
               <p className="text-lg font-bold text-foreground truncate">{records[0]?.name}</p>
               <p className="text-sm text-muted-foreground font-mono">MSSV: {records[0]?.student_code}</p>
             </div>
-            <div className="shrink-0 text-right">
+            <div className="shrink-0 text-right" style={{ animation: "badgePop 0.5s ease-out 0.2s both" }}>
               <p className="text-2xl font-bold text-primary">{uniqueClassIds.length}</p>
               <p className="text-xs text-muted-foreground">lớp học</p>
             </div>
@@ -269,11 +342,10 @@ const TraCuuDiemDanh = () => {
         {/* Empty state */}
         {searched && uniqueClassIds.length === 0 && (
           <div
-            className="card-3d w-full max-w-2xl rounded-2xl border border-border/50 p-10 text-center"
+            className="result-card w-full max-w-2xl rounded-2xl border border-border/50 p-10 text-center"
             style={{
               background: "linear-gradient(145deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%)",
-              boxShadow: "var(--shadow-card)",
-              animation: "cardEnter 0.5s ease-out",
+              animation: "cardReveal 0.5s ease-out",
             }}
           >
             <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-muted/50 flex items-center justify-center">
@@ -294,11 +366,11 @@ const TraCuuDiemDanh = () => {
           return (
             <div
               key={classId}
-              className="card-3d w-full max-w-2xl rounded-2xl border border-border/50 p-5 sm:p-6 mb-6"
+              className="result-card w-full max-w-2xl rounded-2xl border border-border/50 p-5 sm:p-6 mb-6"
               style={{
                 background: "linear-gradient(145deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%)",
-                boxShadow: "var(--shadow-elevated), inset 0 1px 0 hsl(0 0% 100% / 0.08)",
-                animation: `slideUp 0.4s ease-out ${0.1 + idx * 0.1}s both`,
+                boxShadow: "0 12px 40px -8px hsl(var(--primary) / 0.08), inset 0 1px 0 hsl(0 0% 100% / 0.08)",
+                animation: `cardReveal 0.5s ease-out ${0.1 + idx * 0.12}s both`,
               }}
             >
               {/* Class header */}
@@ -315,7 +387,6 @@ const TraCuuDiemDanh = () => {
                     <p className="text-sm text-muted-foreground truncate">Sinh viên: {studentName}</p>
                   )}
                 </div>
-                {/* Attendance rate badge */}
                 <div
                   className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold"
                   style={{
@@ -329,20 +400,21 @@ const TraCuuDiemDanh = () => {
                       : attendanceRate >= 50
                         ? "hsl(var(--accent-foreground))"
                         : "hsl(var(--destructive))",
+                    animation: "badgePop 0.4s ease-out 0.3s both",
                   }}
                 >
                   {attendedWeeks.size}/{totalWeeks} tuần · {attendanceRate}%
                 </div>
               </div>
 
-              {/* Weeks grid */}
+              {/* Weeks grid — 3D cells */}
               <div className="grid grid-cols-5 sm:grid-cols-8 gap-2">
                 {weeksArray.map((week) => {
                   const attended = attendedWeeks.has(week);
                   return (
                     <div
                       key={week}
-                      className="week-cell relative flex flex-col items-center gap-1 rounded-xl p-2 cursor-default"
+                      className="week-cell-3d relative flex flex-col items-center gap-1 rounded-xl p-2 cursor-default"
                       style={{
                         background: attended
                           ? "hsl(var(--success) / 0.1)"
@@ -350,6 +422,9 @@ const TraCuuDiemDanh = () => {
                         border: `1px solid ${attended
                           ? "hsl(var(--success) / 0.25)"
                           : "hsl(var(--border) / 0.4)"}`,
+                        boxShadow: attended
+                          ? "0 4px 12px -2px hsl(var(--success) / 0.15)"
+                          : "none",
                       }}
                     >
                       <span className="text-[10px] font-semibold text-muted-foreground">T{week}</span>
@@ -363,8 +438,8 @@ const TraCuuDiemDanh = () => {
                 })}
               </div>
 
-              {/* Progress bar */}
-              <div className="mt-4 h-2 rounded-full bg-muted/50 overflow-hidden">
+              {/* Progress bar with glow */}
+              <div className="mt-4 h-2.5 rounded-full bg-muted/50 overflow-hidden relative">
                 <div
                   className="h-full rounded-full transition-all duration-700 ease-out"
                   style={{
@@ -374,6 +449,13 @@ const TraCuuDiemDanh = () => {
                       : attendanceRate >= 50
                         ? "hsl(var(--accent))"
                         : "hsl(var(--destructive))",
+                    boxShadow: `0 0 12px 2px ${
+                      attendanceRate >= 80
+                        ? "hsl(var(--success) / 0.4)"
+                        : attendanceRate >= 50
+                          ? "hsl(var(--accent) / 0.4)"
+                          : "hsl(var(--destructive) / 0.4)"
+                    }`,
                   }}
                 />
               </div>

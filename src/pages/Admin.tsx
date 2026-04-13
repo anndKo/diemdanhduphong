@@ -92,105 +92,79 @@ const ClassCard = memo(({
 
 
 }: {classItem: ClassItem;remainingTime: string | null;isActive: boolean;isTimerTarget: boolean;timerWeek: string;timerMinutes: string;advancedVerification: boolean;isGettingGPS: boolean;onSelect: () => void;onCopyCode: () => void;onDelete: () => void;onStartAttendance: () => void;onStopAttendance: () => void;onSetTimerTarget: () => void;onCancelTimer: () => void;onTimerWeekChange: (v: string) => void;onTimerMinutesChange: (v: string) => void;onAdvancedChange: (v: boolean) => void;index?: number;}) => {
-const gradients = [
-  'from-violet-600/20 via-purple-500/10 to-fuchsia-500/5 border-violet-500/20',
-  'from-blue-600/20 via-cyan-500/10 to-teal-500/5 border-blue-500/20',
-  'from-emerald-600/20 via-green-500/10 to-lime-500/5 border-emerald-500/20',
-  'from-orange-600/20 via-amber-500/10 to-yellow-500/5 border-orange-500/20',
-  'from-rose-600/20 via-pink-500/10 to-red-500/5 border-rose-500/20',
-  'from-indigo-600/20 via-blue-500/10 to-sky-500/5 border-indigo-500/20',
-];
-const iconColors = [
-  'text-violet-500 bg-violet-500/15',
-  'text-blue-500 bg-blue-500/15',
-  'text-emerald-500 bg-emerald-500/15',
-  'text-orange-500 bg-orange-500/15',
-  'text-rose-500 bg-rose-500/15',
-  'text-indigo-500 bg-indigo-500/15',
-];
-const idx = (classItem.name.charCodeAt(0) + classItem.name.length) % gradients.length;
-const gradient = gradients[idx];
-const iconColor = iconColors[idx];
-
 return (
 <div
-  className={`relative overflow-hidden rounded-2xl border p-4 md:p-5 cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all duration-300 group bg-gradient-to-br ${gradient}`}
+  className="relative overflow-hidden rounded-xl border border-[hsl(213,80%,88%)] bg-[hsl(210,100%,97%)] dark:bg-[hsl(220,25%,14%)] dark:border-[hsl(220,30%,25%)] p-4 md:p-5 cursor-pointer group transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(37,99,235,0.12)] hover:bg-[hsl(204,100%,94%)] dark:hover:bg-[hsl(220,25%,16%)]"
   onClick={onSelect}>
   
-    <div className="flex items-start justify-between mb-2 md:mb-3">
-      <div className={`w-10 h-10 md:w-12 md:h-12 rounded-xl ${iconColor} flex items-center justify-center`}>
-        <BookOpen className="w-5 h-5 md:w-6 md:h-6" />
+    {/* Top row: icon + weeks badge + delete */}
+    <div className="flex items-start justify-between mb-3">
+      <div className="w-10 h-10 md:w-11 md:h-11 rounded-xl bg-[hsl(217,91%,53%)]/10 dark:bg-primary/20 flex items-center justify-center">
+        <BookOpen className="w-5 h-5 md:w-[22px] md:h-[22px] text-primary" />
       </div>
-      <div className="flex items-center gap-1 md:gap-2">
-        <div className="px-2 py-1 bg-secondary text-secondary-foreground rounded-lg text-xs font-medium flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
+        <div className="px-2 py-0.5 bg-[hsl(204,100%,94%)] dark:bg-primary/15 text-[hsl(201,90%,32%)] dark:text-primary rounded-full text-[11px] font-semibold flex items-center gap-1 border border-[hsl(213,80%,88%)] dark:border-primary/20">
           <Calendar className="w-3 h-3" />
-          {classItem.weeks_count}T
+          {classItem.weeks_count} Tuần
         </div>
         <Button
         variant="ghost"
         size="icon"
-        className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity duration-150"
         onClick={(e) => {e.stopPropagation();onDelete();}}>
-        
-          <Trash2 className="w-4 h-4 text-destructive" />
+          <Trash2 className="w-3.5 h-3.5 text-destructive" />
         </Button>
       </div>
     </div>
     
-    <h3 className="font-semibold text-foreground mb-2 line-clamp-1 text-sm md:text-base">
+    {/* Class name */}
+    <h3 className="font-semibold text-[hsl(222,47%,11%)] dark:text-foreground mb-2.5 line-clamp-1 text-sm md:text-[15px] leading-tight">
       {classItem.name}
     </h3>
     
-    <div className="flex items-center justify-between mb-2 md:mb-3">
+    {/* Code badge + date */}
+    <div className="flex items-center justify-between mb-3">
       <div
-      className="flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 bg-primary/10 rounded-lg cursor-pointer hover:bg-primary/20 transition-colors"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[hsl(219,92%,90%)] dark:bg-primary/15 rounded-full cursor-pointer hover:bg-[hsl(219,92%,85%)] dark:hover:bg-primary/25 transition-colors"
       onClick={(e) => {e.stopPropagation();onCopyCode();}}>
-      
-        <span className="font-mono font-bold text-primary text-sm md:text-base">{classItem.code}</span>
-        <Copy className="w-3 h-3 md:w-4 md:h-4 text-primary" />
+        <span className="font-mono font-bold text-[hsl(226,71%,40%)] dark:text-primary text-base tracking-wide">{classItem.code}</span>
+        <Copy className="w-3 h-3 text-[hsl(226,71%,40%)] dark:text-primary" />
       </div>
-      <span className="text-xs text-muted-foreground">
+      <span className="text-[11px] text-[hsl(215,16%,47%)] dark:text-muted-foreground">
         {new Date(classItem.created_at).toLocaleDateString("vi-VN")}
       </span>
     </div>
 
     {/* Attendance Timer Section */}
-    <div className="pt-2 md:pt-3 border-t space-y-2" onClick={(e) => e.stopPropagation()}>
+    <div className="pt-3 border-t border-[hsl(213,80%,88%)] dark:border-[hsl(220,30%,25%)] space-y-2" onClick={(e) => e.stopPropagation()}>
       {isActive ?
-    <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1 md:gap-2 text-green-600">
-            <Clock className="w-3 h-3 md:w-4 md:h-4 animate-pulse" />
-            <span className="text-xs md:text-sm font-medium">
-              T{classItem.current_week} - {remainingTime}
+    <div className="flex items-center justify-between p-2.5 bg-[hsl(142,76%,95%)] dark:bg-green-500/10 rounded-lg border border-[hsl(142,60%,80%)] dark:border-green-500/20">
+          <div className="flex items-center gap-1.5 text-[hsl(142,76%,30%)] dark:text-green-400">
+            <CheckCircle2 className="w-3.5 h-3.5 animate-pulse" />
+            <span className="text-xs md:text-sm font-semibold">
+              Tuần {classItem.current_week} - {remainingTime}
             </span>
           </div>
           <Button
         size="sm"
         variant="destructive"
-        className="h-7 md:h-8 text-xs"
+        className="h-7 text-xs rounded-lg px-3"
         onClick={onStopAttendance}>
-        
             Tắt
           </Button>
         </div> :
     isTimerTarget ?
-    <div className="space-y-2 relative">
+    <div className="space-y-2.5 relative">
           {/* GPS Loading Overlay */}
           <AnimatePresence>
             {isGettingGPS && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.25, ease: "easeOut" }}
-                className="absolute inset-0 z-10 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-2 py-3"
-                style={{
-                  background: "linear-gradient(135deg, hsl(var(--primary)/0.12) 0%, hsl(var(--primary)/0.06) 100%)",
-                  backdropFilter: "blur(6px)",
-                  border: "1px solid hsl(var(--primary)/0.25)",
-                }}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                className="absolute inset-0 z-10 rounded-lg overflow-hidden flex flex-col items-center justify-center gap-2 py-3 bg-background/80 backdrop-blur-md border border-primary/20 shadow-lg"
               >
-                {/* Ripple rings */}
                 <div className="relative flex items-center justify-center w-10 h-10">
                   {[0, 1, 2].map((i) => (
                     <motion.div
@@ -214,76 +188,64 @@ return (
                   <p className="text-xs font-semibold text-primary leading-tight">Đang lấy vị trí GPS</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">Vui lòng chờ...</p>
                 </div>
-                {/* Animated dots */}
-                <div className="flex gap-1">
-                  {[0, 1, 2].map((i) => (
-                    <motion.div
-                      key={i}
-                      className="w-1 h-1 rounded-full bg-primary"
-                      animate={{ opacity: [0.3, 1, 0.3] }}
-                      transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.25 }}
-                    />
-                  ))}
-                </div>
               </motion.div>
             )}
           </AnimatePresence>
 
-          <div className={`flex items-center gap-1 md:gap-2 transition-opacity duration-200 ${isGettingGPS ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
+          <div className={`flex items-center gap-1.5 transition-opacity duration-200 ${isGettingGPS ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
             <Input
           type="number"
-          placeholder="T"
+          placeholder="Tuần"
           value={timerWeek}
           onChange={(e) => onTimerWeekChange(e.target.value)}
-          className="w-12 md:w-14 h-7 md:h-8 text-xs md:text-sm px-2"
+          className="w-12 h-8 text-xs px-2 border-[hsl(213,80%,88%)] dark:border-primary/20 focus:border-primary"
           min={1}
           max={classItem.weeks_count} />
-        
             <Input
           type="number"
           placeholder="Phút"
           value={timerMinutes}
           onChange={(e) => onTimerMinutesChange(e.target.value)}
-          className="w-14 md:w-16 h-7 md:h-8 text-xs md:text-sm px-2"
+          className="w-14 h-8 text-xs px-2 border-[hsl(213,80%,88%)] dark:border-primary/20 focus:border-primary"
           min={1}
           max={120} />
-        
             <Button
           size="sm"
           onClick={onStartAttendance}
-          className="btn-primary-gradient h-7 md:h-8 text-xs px-2 md:px-3"
+          className="h-8 text-xs px-3 bg-[hsl(217,91%,53%)] hover:bg-[hsl(226,71%,40%)] text-white rounded-lg shadow-sm"
           disabled={isGettingGPS}>
-          
               Bắt đầu
             </Button>
             <Button
           size="sm"
           variant="ghost"
-          className="h-7 md:h-8 text-xs px-2"
+          className="h-8 text-xs px-2"
           onClick={onCancelTimer}>
-          
               Hủy
             </Button>
           </div>
           
-          <div className={`flex items-center justify-between p-2 bg-muted/50 rounded-lg transition-opacity duration-200 ${isGettingGPS ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
-            <Label className="text-xs flex items-center gap-1.5 cursor-pointer">
-              <Shield className="w-3.5 h-3.5 text-primary" />
-              <span>Nâng cao</span>
+          {/* Advanced verification toggle */}
+          <div className={`flex items-center justify-between p-3 rounded-xl transition-all duration-200 ${isGettingGPS ? "opacity-0 pointer-events-none" : "opacity-100"} ${advancedVerification ? "bg-amber-50 dark:bg-amber-500/10 border-2 border-amber-400 dark:border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.15)]" : "bg-muted/50 border-2 border-muted"}`}>
+            <Label className="text-xs flex items-center gap-2.5 cursor-pointer">
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${advancedVerification ? "bg-amber-400/20 dark:bg-amber-500/20" : "bg-muted"}`}>
+                <Shield className={`w-4 h-4 ${advancedVerification ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />
+              </div>
+              <span className={`text-[13px] ${advancedVerification ? "text-amber-700 dark:text-amber-300 font-bold" : "text-muted-foreground font-medium"}`}>Xác minh nâng cao</span>
             </Label>
             <Switch
           checked={advancedVerification}
           onCheckedChange={onAdvancedChange}
-          className="scale-75" />
-        
+          className={advancedVerification ? "data-[state=checked]:bg-amber-500" : ""} />
           </div>
           {advancedVerification && !isGettingGPS &&
-      <p className="text-xs text-primary">
-              ✓ Yêu cầu xác minh khuôn mặt trước khi điểm danh
+      <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1.5 pl-1">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Yêu cầu xác minh khuôn mặt khi điểm danh
             </p>
       }
           
-          {!isGettingGPS && <p className="text-xs text-muted-foreground">
+          {!isGettingGPS && <p className="text-[11px] text-muted-foreground pl-1">
             Tuần: 1-{classItem.weeks_count}, Phút: 1-120
           </p>}
         </div> :
@@ -291,11 +253,10 @@ return (
     <Button
       size="sm"
       variant="outline"
-      className="w-full h-8 md:h-9 text-xs md:text-sm"
+      className="w-full h-9 text-xs md:text-sm border-[hsl(213,80%,88%)] dark:border-primary/20 hover:bg-primary/5 hover:text-primary hover:border-primary/30 transition-all rounded-lg"
       onClick={onSetTimerTarget}>
-      
-          <Clock className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
-          Điểm danh
+          <Clock className="w-3.5 h-3.5 mr-1.5 text-primary" />
+          Bật điểm danh
         </Button>
     }
     </div>
@@ -363,7 +324,7 @@ const Admin = () => {
   // Timer tick - only updates a counter, not the classes array
   const [timerTick, setTimerTick] = useState(0);
 
-  const { getAccuratePosition } = useGPS();
+  const { getAccuratePosition, startContinuousTracking, stopContinuousTracking, currentPosition } = useGPS();
 
   useEffect(() => {
     checkAuth();
@@ -539,6 +500,10 @@ const Admin = () => {
       setTimerMinutes("");
       setTimerWeek("1");
       setAdvancedVerification(false);
+
+      // Start continuous GPS tracking to keep admin position updated
+      startContinuousTracking();
+
       const advancedText = advancedVerification ? " (Xác minh nâng cao)" : "";
       toast.success(`Đã bật điểm danh tuần ${week} trong ${minutes} phút${advancedText}! Mã mới: ${newCode}`);
     } catch (error) {
@@ -548,15 +513,17 @@ const Admin = () => {
     } finally {
       setIsGettingGPS(false);
     }
-  }, [timerMinutes, timerWeek, advancedVerification, classes, getAccuratePosition]);
+  }, [timerMinutes, timerWeek, advancedVerification, classes, getAccuratePosition, startContinuousTracking]);
 
   const handleStopAttendance = useCallback(async (classId: string) => {
     try {
+      const newCode = generateCode();
       const { error } = await supabase.
       from("classes" as any).
       update({
         attendance_duration_minutes: null,
-        attendance_started_at: null
+        attendance_started_at: null,
+        code: newCode
       }).
       eq("id", classId);
 
@@ -564,15 +531,19 @@ const Admin = () => {
 
       setClasses((prev) => prev.map((c) =>
       c.id === classId ?
-      { ...c, attendance_duration_minutes: null, attendance_started_at: null } :
+      { ...c, attendance_duration_minutes: null, attendance_started_at: null, code: newCode } :
       c
       ));
-      toast.success("Đã tắt điểm danh!");
+
+      // Stop continuous GPS tracking
+      stopContinuousTracking();
+
+      toast.success("Đã tắt điểm danh! Mã cũ đã hết hiệu lực.");
     } catch (error) {
       console.error("Error stopping attendance:", error);
       toast.error("Không thể tắt điểm danh!");
     }
-  }, []);
+  }, [stopContinuousTracking]);
 
   // Check if any class has active attendance - only tick if needed
   const hasActiveAttendance = useMemo(() => {
@@ -583,6 +554,29 @@ const Admin = () => {
       return Date.now() < endTime;
     });
   }, [classes]);
+
+  // Update admin GPS to DB every 30s while attendance is active
+  useEffect(() => {
+    if (!hasActiveAttendance || !currentPosition) return;
+    const activeClass = classes.find((c) => {
+      if (!c.attendance_started_at || !c.attendance_duration_minutes) return false;
+      const endTime = new Date(c.attendance_started_at).getTime() + c.attendance_duration_minutes * 60 * 1000;
+      return Date.now() < endTime;
+    });
+    if (!activeClass) return;
+
+    const interval = setInterval(async () => {
+      if (!currentPosition) return;
+      await supabase
+        .from("classes" as any)
+        .update({
+          admin_latitude: currentPosition.latitude,
+          admin_longitude: currentPosition.longitude,
+        })
+        .eq("id", activeClass.id);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [hasActiveAttendance, currentPosition, classes]);
 
   // Only run timer when there's active attendance
   useEffect(() => {

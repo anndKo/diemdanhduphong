@@ -9,6 +9,9 @@ interface GPSResult {
 interface UseGPSReturn {
   getAccuratePosition: () => Promise<GPSResult>;
   requestPermission: () => void;
+  startContinuousTracking: () => void;
+  stopContinuousTracking: () => void;
+  currentPosition: GPSResult | null;
   isLoading: boolean;
   error: string | null;
   permissionStatus: PermissionState | null;
@@ -37,9 +40,12 @@ const useGPS = (): UseGPSReturn => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permissionStatus, setPermissionStatus] = useState<PermissionState | null>(null);
+  const [currentPosition, setCurrentPosition] = useState<GPSResult | null>(null);
 
   // Cache: best position seen so far
   const cachedPosition = useRef<{ result: GPSResult; ts: number } | null>(null);
+  // Continuous tracking watch id
+  const continuousWatchId = useRef<number | null>(null);
 
   // Watch permission status
   useEffect(() => {
@@ -61,6 +67,7 @@ const useGPS = (): UseGPSReturn => {
           accuracy: pos.coords.accuracy,
         };
         cachedPosition.current = { result, ts: Date.now() };
+        setCurrentPosition(result);
         setPermissionStatus('granted');
       },
       (err) => {
@@ -72,11 +79,55 @@ const useGPS = (): UseGPSReturn => {
   }, []);
 
   /**
+   * Bật theo dõi GPS liên tục — dùng cho admin khi bật điểm danh.
+   * Cập nhật currentPosition liên tục để luôn có vị trí chính xác nhất.
+   */
+  const startContinuousTracking = useCallback(() => {
+    if (!navigator.geolocation) return;
+    // Clear existing watch
+    if (continuousWatchId.current !== null) {
+      navigator.geolocation.clearWatch(continuousWatchId.current);
+    }
+
+    continuousWatchId.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const result: GPSResult = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        };
+        cachedPosition.current = { result, ts: Date.now() };
+        setCurrentPosition(result);
+      },
+      (err) => {
+        console.warn('Continuous GPS error:', err.code, err.message);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 3000,
+      }
+    );
+  }, []);
+
+  const stopContinuousTracking = useCallback(() => {
+    if (continuousWatchId.current !== null) {
+      navigator.geolocation.clearWatch(continuousWatchId.current);
+      continuousWatchId.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (continuousWatchId.current !== null) {
+        navigator.geolocation.clearWatch(continuousWatchId.current);
+      }
+    };
+  }, []);
+
+  /**
    * Lấy vị trí chính xác cao bằng cách dùng watchPosition liên tục.
-   * - Không bao giờ reject vì hết giờ (TIMEOUT).
-   * - Resolve ngay khi accuracy ≤ 40m.
-   * - Nếu sau 10 giây vẫn chưa ≤ 40m, resolve với kết quả tốt nhất hiện có.
-   * - Chỉ reject khi PERMISSION_DENIED (người dùng từ chối hoàn toàn).
    */
   const getAccuratePosition = useCallback((): Promise<GPSResult> => {
     return new Promise((resolve, reject) => {
@@ -107,21 +158,18 @@ const useGPS = (): UseGPSReturn => {
         navigator.geolocation.clearWatch(watchId);
         clearTimeout(softDeadline);
         cachedPosition.current = { result, ts: Date.now() };
+        setCurrentPosition(result);
         setIsLoading(false);
         resolve(result);
       };
 
-      // Soft deadline: 10s — resolve với kết quả tốt nhất, không reject
       const softDeadline = setTimeout(() => {
         if (settled) return;
         if (bestResult) {
           done(bestResult);
         }
-        // Nếu chưa có gì (rất hiếm), tiếp tục chờ thêm 10s rồi resolve lần nữa
-        // (watchPosition vẫn chạy cho đến khi có kết quả)
       }, 10000);
 
-      // Hard fallback: 30s — resolve với bất kỳ kết quả nào, hoặc từ chối nếu vẫn không có
       const hardDeadline = setTimeout(() => {
         if (settled) return;
         if (bestResult) {
@@ -144,20 +192,17 @@ const useGPS = (): UseGPSReturn => {
             accuracy: pos.coords.accuracy,
           };
 
-          // Cập nhật best nếu tốt hơn
           if (result.accuracy < bestAccuracy) {
             bestAccuracy = result.accuracy;
             bestResult = result;
           }
 
-          // Resolve ngay nếu accuracy đủ tốt
           if (!settled && result.accuracy <= 40) {
             clearTimeout(hardDeadline);
             done(result);
           }
         },
         (err) => {
-          // Chỉ PERMISSION_DENIED mới reject hoàn toàn
           if (err.code === err.PERMISSION_DENIED) {
             if (settled) return;
             settled = true;
@@ -170,22 +215,18 @@ const useGPS = (): UseGPSReturn => {
             reject(new Error(msg));
             return;
           }
-
-          // POSITION_UNAVAILABLE hoặc TIMEOUT → không reject, tiếp tục watchPosition
-          // watchPosition tự động thử lại theo trình duyệt
-          // Nếu đã có best result từ trước, giữ nguyên và chờ tiếp
           console.warn('GPS temporary error (will retry):', err.code, err.message);
         },
         {
           enableHighAccuracy: true,
-          timeout: 15000,   // thời gian mỗi lần thử của watchPosition
-          maximumAge: 5000, // dùng cache tối đa 5s
+          timeout: 15000,
+          maximumAge: 5000,
         }
       );
     });
   }, []);
 
-  return { getAccuratePosition, requestPermission, isLoading, error, permissionStatus };
+  return { getAccuratePosition, requestPermission, startContinuousTracking, stopContinuousTracking, currentPosition, isLoading, error, permissionStatus };
 };
 
 export default useGPS;

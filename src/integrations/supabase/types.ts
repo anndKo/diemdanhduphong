@@ -195,6 +195,51 @@ export type Database = {
         }
         Relationships: []
       }
+      deleted_attendance_records: {
+        Row: {
+          bonus_points: number | null
+          class_id: string
+          deleted_at: string
+          deleted_by: string | null
+          group_number: string
+          id: string
+          name: string
+          original_created_at: string
+          original_id: string
+          photo_url: string | null
+          student_code: string
+          week_number: number
+        }
+        Insert: {
+          bonus_points?: number | null
+          class_id: string
+          deleted_at?: string
+          deleted_by?: string | null
+          group_number: string
+          id?: string
+          name: string
+          original_created_at: string
+          original_id: string
+          photo_url?: string | null
+          student_code: string
+          week_number?: number
+        }
+        Update: {
+          bonus_points?: number | null
+          class_id?: string
+          deleted_at?: string
+          deleted_by?: string | null
+          group_number?: string
+          id?: string
+          name?: string
+          original_created_at?: string
+          original_id?: string
+          photo_url?: string | null
+          student_code?: string
+          week_number?: number
+        }
+        Relationships: []
+      }
       device_blocks: {
         Row: {
           block_count: number

@@ -5,7 +5,7 @@ const LS_KEY_NAME = "attendance_studentName";
 const LS_KEY_CODE = "attendance_studentCode";
 
 // Thresholds
-const FACE_MATCH_THRESHOLD = 0.75; // ≥75% = same person
+const FACE_MATCH_THRESHOLD = 0.65; // ≥65% = same person (relaxed to avoid false rejections)
 
 export interface FaceVerificationResult {
   passed: boolean;
@@ -50,20 +50,20 @@ export const getEmbedding = async (photoUrl: string): Promise<Float32Array | nul
   return detectFace(img);
 };
 
-/** Fetch up to 2 recent attendance photos for a student in a class */
+/** Fetch up to 2 recent attendance photos for a student in a class (within 4 weeks) */
 const fetchRecentPhotos = async (
   classId: string,
   studentCode: string,
 ): Promise<string[]> => {
-  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const fourWeeksAgo = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Try recent photos first (within 1 week)
+  // Try recent photos first (within 4 weeks)
   const { data: recent } = await supabase
     .from("attendance_records" as any)
     .select("photo_url")
     .eq("class_id", classId)
     .eq("student_code", studentCode)
-    .gte("created_at", oneWeekAgo)
+    .gte("created_at", fourWeeksAgo)
     .order("created_at", { ascending: false })
     .limit(2);
 
@@ -90,6 +90,7 @@ const fetchRecentPhotos = async (
 /**
  * Full face verification flow.
  * Returns quickly if same device (localStorage match).
+ * Accepts if ANY one of the recent photos matches.
  */
 export const verifyFace = async (
   currentPhotoDataUrl: string,
@@ -117,29 +118,31 @@ export const verifyFace = async (
     return { passed: true, reason: "first_time" };
   }
 
-  // Step 4: Compare with each recent photo, take best match
+  // Step 4: Compare with each recent photo — accept if ANY one matches
   let bestSimilarity = 0;
+  let anyExtracted = false;
 
   for (const url of recentUrls) {
     try {
       const storedEmbedding = await getEmbedding(url);
       if (!storedEmbedding) continue;
+      anyExtracted = true;
       const similarity = compareFaces(currentEmbedding, storedEmbedding);
       if (similarity > bestSimilarity) bestSimilarity = similarity;
+      // Early exit: if one photo matches, no need to check more
+      if (similarity >= FACE_MATCH_THRESHOLD) {
+        return { passed: true, reason: "face_matched", similarity };
+      }
     } catch {
       // Skip broken images
     }
   }
 
   // Step 5: If no stored embeddings were extractable, treat as first time
-  if (bestSimilarity === 0) {
+  if (!anyExtracted) {
     return { passed: true, reason: "first_time" };
   }
 
-  // Step 6: Decide
-  if (bestSimilarity >= FACE_MATCH_THRESHOLD) {
-    return { passed: true, reason: "face_matched", similarity: bestSimilarity };
-  }
-
+  // Step 6: None matched
   return { passed: false, reason: "face_mismatch", similarity: bestSimilarity };
 };
