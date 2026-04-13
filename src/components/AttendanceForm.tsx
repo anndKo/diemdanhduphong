@@ -5,12 +5,13 @@ import { Label } from "@/components/ui/label";
 
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { X, Camera, User, Hash, Users, Loader2, RefreshCw, Calendar, Star, Shield, CheckCircle, Plus } from "lucide-react";
+import { X, Camera, User, Hash, Users, Loader2, RefreshCw, Calendar, Star, Shield, CheckCircle, Plus, AlertTriangle } from "lucide-react";
 
 import { z } from "zod";
 import { normalizeName, compareNames, compareStrings } from "@/lib/nameUtils";
 import LivenessVerification from "./LivenessVerification";
 import AttendanceSuccessAd from "./AttendanceSuccessAd";
+
 
 const attendanceSchema = z.object({
   name: z.string().min(2, "Tên phải có ít nhất 2 ký tự").max(100, "Tên quá dài"),
@@ -102,6 +103,21 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
   const [showLivenessVerification, setShowLivenessVerification] = useState(false);
   const [isLivenessVerified, setIsLivenessVerified] = useState(false);
   const requiresVerification = classInfo.advanced_verification === true;
+
+  
+  // Retake flow state (when face mismatch on different device)
+  const [showRetakeModal, setShowRetakeModal] = useState(false);
+  const [retakePhotoData, setRetakePhotoData] = useState<string | null>(null);
+  const [isRetakeCameraActive, setIsRetakeCameraActive] = useState(false);
+  const [isRetakeCameraLoading, setIsRetakeCameraLoading] = useState(false);
+  const [isRetakeVerifying, setIsRetakeVerifying] = useState(false);
+  const [retakeError, setRetakeError] = useState<string | null>(null);
+  const [showRetakeLiveness, setShowRetakeLiveness] = useState(false);
+  const [isRetakeLivenessVerified, setIsRetakeLivenessVerified] = useState(false);
+  const retakeVideoRef = useRef<HTMLVideoElement>(null);
+  const retakeStreamRef = useRef<MediaStream | null>(null);
+  // Store pending submit data for after retake succeeds
+  const pendingSubmitRef = useRef<{ normalizedName: string; validBonusCodes: string[]; bonusPointsValue: number } | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -423,6 +439,16 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
     }
     const bonusPointsValue = validBonusCodes.length;
 
+    // Proceed with actual submission directly (no face verification delay)
+
+
+    // Proceed with actual submission
+    await doSubmit(normalizedName, validBonusCodes, bonusPointsValue, photoData);
+  };
+
+  // Extracted submission logic so retake flow can also call it
+  const doSubmit = async (normalizedName: string, validBonusCodes: string[], bonusPointsValue: number, photoToUpload: string) => {
+
     // Prevent double submit
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
@@ -430,7 +456,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
 
     try {
       // Compress photo for faster upload on slow networks
-      const blob = await fetch(photoData).then(r => r.blob());
+      const blob = await fetch(photoToUpload).then(r => r.blob());
       const compressedBlob = new Blob([blob], { type: "image/jpeg" });
       const fileName = `${classInfo.id}/${Date.now()}_${studentCode}.jpg`;
       
@@ -452,6 +478,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
         .getPublicUrl(fileName);
       photoUrl = publicUrl;
 
+      const week = defaultWeek;
       // Save attendance record
       for (let attempt = 0; attempt < 3; attempt++) {
         const { error } = await supabase
@@ -504,6 +531,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
       }
     }
 
+
       // Show success + ad overlay — do NOT call onSuccess() yet (keeps form alive for overlay)
       setSubmittedName(normalizeName(name));
       setShowSuccessAd(true);
@@ -517,8 +545,78 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
     }
   };
 
+  // ── Retake camera functions ──
+  const startRetakeCamera = useCallback(async () => {
+    setIsRetakeCameraLoading(true);
+    if (retakeStreamRef.current) {
+      retakeStreamRef.current.getTracks().forEach(t => t.stop());
+      retakeStreamRef.current = null;
+    }
+    try {
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: isMobile ? 480 : 640 }, height: { ideal: isMobile ? 360 : 480 } },
+        audio: false,
+      });
+      retakeStreamRef.current = stream;
+      if (!retakeVideoRef.current) { setIsRetakeCameraLoading(false); return; }
+      const video = retakeVideoRef.current;
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      video.onloadedmetadata = async () => {
+        try { await video.play(); setIsRetakeCameraActive(true); } catch { toast.error("Camera bị chặn"); }
+        setIsRetakeCameraLoading(false);
+      };
+    } catch { toast.error("Không thể mở camera"); setIsRetakeCameraLoading(false); }
+  }, []);
+
+  const stopRetakeCamera = useCallback(() => {
+    if (retakeStreamRef.current) { retakeStreamRef.current.getTracks().forEach(t => t.stop()); retakeStreamRef.current = null; }
+    if (retakeVideoRef.current) retakeVideoRef.current.srcObject = null;
+    setIsRetakeCameraActive(false);
+  }, []);
+
+  const captureRetakePhoto = useCallback(() => {
+    if (!retakeVideoRef.current || !retakeVideoRef.current.videoWidth) { toast.error("Camera chưa sẵn sàng"); return; }
+    const canvas = document.createElement("canvas");
+    canvas.width = retakeVideoRef.current.videoWidth;
+    canvas.height = retakeVideoRef.current.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(retakeVideoRef.current, 0, 0);
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const dataUrl = canvas.toDataURL("image/jpeg", isMobile ? 0.75 : 0.85);
+      setRetakePhotoData(dataUrl);
+      stopRetakeCamera();
+      if (requiresVerification) setTimeout(() => setShowRetakeLiveness(true), 100);
+    }
+  }, [stopRetakeCamera, requiresVerification]);
+
+  const handleRetakeVerifyAndSubmit = async () => {
+    if (!retakePhotoData || !pendingSubmitRef.current) return;
+    const { normalizedName, validBonusCodes, bonusPointsValue } = pendingSubmitRef.current;
+    setShowRetakeModal(false);
+    pendingSubmitRef.current = null;
+    stopRetakeCamera();
+    setPhotoData(retakePhotoData);
+    await doSubmit(normalizedName, validBonusCodes, bonusPointsValue, retakePhotoData);
+  };
+
+  const closeRetakeModal = () => {
+    stopRetakeCamera();
+    setShowRetakeModal(false);
+    setRetakePhotoData(null);
+    setRetakeError(null);
+    setIsRetakeLivenessVerified(false);
+    pendingSubmitRef.current = null;
+  };
+
   const handleClose = () => {
     stopCamera();
+    stopRetakeCamera();
     onClose();
   };
 
@@ -526,7 +624,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
     <div className="modal-overlay animate-fade-in" onClick={handleClose}>
       <div className="min-h-screen flex items-center justify-center p-4">
         <div
-          className="modal-content w-full max-w-lg p-6 md:p-8 animate-scale-in max-h-[90vh] overflow-y-auto"
+          className="modal-content w-full max-w-lg p-6 md:p-8 animate-scale-in max-h-[90vh] overflow-y-auto custom-scrollbar"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -556,7 +654,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                   Ảnh điểm danh
                 </Label>
                 
-                <div className="relative aspect-[4/3] bg-muted rounded-xl overflow-hidden">
+                <div className="relative aspect-square bg-muted rounded-xl overflow-hidden">
                   {/* VIDEO LUÔN RENDER */}
                   <video
                     ref={videoRef}
@@ -595,16 +693,43 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                 </div>
 
 
-                <div className="flex gap-2">
+                {/* Photo status & controls */}
+                <div className="space-y-2">
+                  {photoData && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 rounded-lg">
+                      <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                      <span className="text-sm font-medium text-green-600">Ảnh đã chụp</span>
+                    </div>
+                  )}
+
+                  {requiresVerification && (
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
+                      isLivenessVerified 
+                        ? "bg-green-500/10" 
+                        : "bg-amber-500/10"
+                    }`}>
+                      {isLivenessVerified ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                          <span className="text-sm font-medium text-green-600">Đã xác minh</span>
+                        </>
+                      ) : (
+                        <>
+                          <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+                          <span className="text-sm text-amber-600">Chưa xác minh</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {photoData ? (
-                    <>
-                      {/* Hide retake button after verification is done */}
+                    <div className="flex gap-2">
                       {!(requiresVerification && isLivenessVerified) && (
                         <Button
                           type="button"
                           variant="outline"
                           onClick={retakePhoto}
-                          className="flex-1"
+                          className="flex-1 rounded-xl"
                         >
                           <RefreshCw className="w-4 h-4 mr-2" />
                           Chụp lại
@@ -614,31 +739,28 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                         <Button
                           type="button"
                           onClick={() => setShowLivenessVerification(true)}
-                          className="flex-1 btn-primary-gradient"
+                          className="flex-1 btn-primary-gradient rounded-xl"
                         >
                           <Shield className="w-4 h-4 mr-2" />
                           Xác minh
                         </Button>
                       )}
-                    </>
+                    </div>
                   ) : isCameraActive ? (
-                    <>
-                      
-                      <Button
-                        type="button"
-                        onClick={capturePhoto}
-                        className="flex-1 btn-primary-gradient"
-                        disabled={isCameraLoading}
-                      >
-                        <Camera className="w-4 h-4 mr-2" />
-                        Chụp ảnh
-                      </Button>
-                    </>
+                    <Button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="w-full btn-primary-gradient rounded-xl"
+                      disabled={isCameraLoading}
+                    >
+                      <Camera className="w-4 h-4 mr-2" />
+                      Chụp ảnh
+                    </Button>
                   ) : (
                     <Button
                       type="button"
                       onClick={() => startCamera()}
-                      className="flex-1"
+                      className="w-full rounded-xl"
                       variant="outline"
                       disabled={isCameraLoading}
                     >
@@ -651,27 +773,6 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                     </Button>
                   )}
                 </div>
-
-                {/* Advanced Verification Status */}
-                {requiresVerification && (
-                  <div className={`p-3 rounded-xl flex items-center gap-2 ${
-                    isLivenessVerified 
-                      ? "bg-green-500/10 text-green-600" 
-                      : "bg-amber-500/10 text-amber-600"
-                  }`}>
-                    {isLivenessVerified ? (
-                      <>
-                        <CheckCircle className="w-5 h-5" />
-                        <span className="text-sm font-medium">Đã xác minh danh tính</span>
-                      </>
-                    ) : (
-                      <>
-                        <Shield className="w-5 h-5" />
-                        <span className="text-sm">Chụp ảnh và bấm "Xác minh" để tiếp tục</span>
-                      </>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* Name Input */}
@@ -842,6 +943,7 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
                 </div>
               )}
 
+
               {/* Submit Button */}
               <Button
                 type="submit"
@@ -880,6 +982,95 @@ const AttendanceForm = ({ classInfo, onClose, onSuccess }: AttendanceFormProps) 
             toast.success("Xác minh danh tính thành công!");
           }}
           onCancel={() => setShowLivenessVerification(false)}
+        />
+      )}
+
+      {/* Retake Photo Modal (on face mismatch) */}
+      {showRetakeModal && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={closeRetakeModal}>
+          <div className="bg-background rounded-2xl w-full max-w-md p-6 space-y-4 animate-scale-in max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-foreground">Chụp lại ảnh xác minh</h3>
+              <button onClick={closeRetakeModal} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/80">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+              <p className="text-sm text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                Khuôn mặt trong ảnh không khớp với dữ liệu trước đó. Vui lòng chụp lại ảnh rõ mặt để xác minh.
+              </p>
+            </div>
+
+            {retakeError && (
+              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-xl">
+                <p className="text-sm text-destructive font-medium">{retakeError}</p>
+              </div>
+            )}
+
+            <div className="relative aspect-[4/3] bg-muted rounded-xl overflow-hidden">
+              <video ref={retakeVideoRef} autoPlay playsInline muted
+                className={`w-full h-full object-cover ${isRetakeCameraActive ? "block" : "hidden"}`}
+                style={{ transform: "scaleX(-1)" }} />
+              {retakePhotoData && (
+                <img src={retakePhotoData} alt="Retake" className="absolute inset-0 w-full h-full object-cover" />
+              )}
+              {!isRetakeCameraActive && !retakePhotoData && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
+                  <Camera className="w-12 h-12 mb-2" /><p>Bấm mở camera</p>
+                </div>
+              )}
+              {isRetakeCameraLoading && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-white" />
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              {retakePhotoData ? (
+                <>
+                  {!(requiresVerification && isRetakeLivenessVerified) && (
+                    <Button type="button" variant="outline" className="flex-1" onClick={() => { setRetakePhotoData(null); setRetakeError(null); setIsRetakeLivenessVerified(false); startRetakeCamera(); }}>
+                      <RefreshCw className="w-4 h-4 mr-2" />Chụp lại
+                    </Button>
+                  )}
+                  {requiresVerification && !isRetakeLivenessVerified ? (
+                    <Button type="button" className="flex-1 btn-primary-gradient" onClick={() => setShowRetakeLiveness(true)}>
+                      <Shield className="w-4 h-4 mr-2" />Xác minh
+                    </Button>
+                  ) : (
+                    <Button type="button" className="flex-1 btn-primary-gradient" disabled={isRetakeVerifying} onClick={handleRetakeVerifyAndSubmit}>
+                      {isRetakeVerifying ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Đang xác minh...</> : <><CheckCircle className="w-4 h-4 mr-2" />Xác nhận & Gửi</>}
+                    </Button>
+                  )}
+                </>
+              ) : isRetakeCameraActive ? (
+                <Button type="button" className="flex-1 btn-primary-gradient" onClick={captureRetakePhoto}>
+                  <Camera className="w-4 h-4 mr-2" />Chụp ảnh
+                </Button>
+              ) : (
+                <Button type="button" variant="outline" className="flex-1" onClick={startRetakeCamera} disabled={isRetakeCameraLoading}>
+                  {isRetakeCameraLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Camera className="w-4 h-4 mr-2" />}
+                  Mở camera
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Retake Liveness Verification */}
+      {showRetakeLiveness && retakePhotoData && (
+        <LivenessVerification
+          referencePhotoUrl={retakePhotoData}
+          onVerified={() => {
+            setIsRetakeLivenessVerified(true);
+            setShowRetakeLiveness(false);
+            toast.success("Xác minh danh tính thành công!");
+          }}
+          onCancel={() => setShowRetakeLiveness(false)}
         />
       )}
 

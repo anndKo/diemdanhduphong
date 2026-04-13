@@ -1,10 +1,11 @@
 /**
- * LivenessVerification — MediaPipe Face Mesh (WebGL/WASM)
+ * LivenessVerification — MediaPipe Face Mesh only (no face-api.js)
  * 4 hành động: quay trái / phải / ngẩng lên / cúi xuống
- * So sánh khuôn mặt vs ảnh tham chiếu bằng face-api (lazy load)
- * Tối ưu: không lag kể cả thiết bị yếu
+ * So sánh khuôn mặt dùng MediaPipe landmark geometry (siêu nhanh, không cần model thêm)
+ * Tối ưu: không lag kể cả thiết bị yếu, mạng yếu
  */
 import { useState, useRef, useCallback, useEffect, memo } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -25,17 +26,20 @@ interface Props {
 /* ─────────────────────── Constants ─────────────────────── */
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+const isLowEnd = isMobile && (navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : true);
 
-const DETECT_INTERVAL = isMobile ? 100 : 66;
-const SUCCESS_FRAMES = 4;
-const COUNTDOWN_SECS = 8;
+const DETECT_INTERVAL = isLowEnd ? 150 : isMobile ? 100 : 66;
+const SUCCESS_FRAMES = isLowEnd ? 3 : 4;
+const COUNTDOWN_SECS = isLowEnd ? 10 : 8;
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task";
-const FACE_API_MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
+const CAM_WIDTH = isLowEnd ? 240 : isMobile ? 320 : 480;
+const CAM_HEIGHT = isLowEnd ? 180 : isMobile ? 240 : 360;
+const CAM_FPS = isLowEnd ? 12 : isMobile ? 15 : 24;
 
-// Threshold for face match: euclidean distance < 0.55 → same person
-const FACE_MATCH_THRESHOLD = 0.55;
+// Landmark geometry match threshold (lower = stricter)
+const GEOMETRY_MATCH_THRESHOLD = 0.78; // ≥78% geometry similarity = same person
 
 const ACTION_META: Record<ActionType, { label: string; desc: string; icon: React.ReactNode }> = {
   turn_left:  { label: "Quay trái",   desc: "Quay mặt sang bên trái",  icon: <ArrowLeft  className="w-8 h-8" /> },
@@ -75,60 +79,78 @@ const ProgressArc = memo(({ progress }: { progress: number }) => (
 ));
 ProgressArc.displayName = "ProgressArc";
 
-/* ─────────────────────── Face comparison helper ─────────────────────── */
-let faceApiReady = false;
-let faceApiLoading = false;
+/* ─────────────────────── Landmark geometry comparison ─────────────────────── */
+// Key landmark indices for face geometry comparison
+// Uses distances between stable facial features (normalized by inter-ocular distance)
+const GEOMETRY_LANDMARKS = {
+  leftEyeOuter: 33,   leftEyeInner: 133,
+  rightEyeOuter: 362, rightEyeInner: 263,
+  noseTip: 1,         noseBase: 2,
+  mouthLeft: 61,      mouthRight: 291,
+  mouthTop: 13,       mouthBottom: 14,
+  chin: 152,          forehead: 10,
+  leftCheek: 234,     rightCheek: 454,
+  leftBrow: 70,       rightBrow: 300,
+  noseLeft: 98,       noseRight: 327,
+};
 
-async function loadFaceApi() {
-  if (faceApiReady) return true;
-  if (faceApiLoading) {
-    // wait until done
-    await new Promise<void>(res => {
-      const check = setInterval(() => { if (faceApiReady || !faceApiLoading) { clearInterval(check); res(); } }, 100);
-    });
-    return faceApiReady;
-  }
-  faceApiLoading = true;
-  try {
-    const faceapi = await import("@vladmandic/face-api");
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_MODEL_URL),
-      faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_API_MODEL_URL),
-    ]);
-    faceApiReady = true;
-    return true;
-  } catch (e) {
-    console.error("face-api load error:", e);
-    return false;
-  } finally {
-    faceApiLoading = false;
-  }
+type LandmarkPoint = { x: number; y: number; z: number };
+
+function dist3d(a: LandmarkPoint, b: LandmarkPoint): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
 }
 
-async function getDescriptorFromUrl(url: string): Promise<Float32Array | null> {
-  try {
-    const faceapi = await import("@vladmandic/face-api");
-    const img = await new Promise<HTMLImageElement>((res, rej) => {
-      const el = new Image();
-      el.crossOrigin = "anonymous";
-      el.onload = () => res(el);
-      el.onerror = rej;
-      el.src = url;
-    });
-    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 });
-    const det = await faceapi.detectSingleFace(img, opts).withFaceLandmarks(true).withFaceDescriptor();
-    return det?.descriptor ?? null;
-  } catch { return null; }
+/** Extract a normalized geometry vector from face landmarks */
+function extractGeometryVector(lm: LandmarkPoint[]): number[] | null {
+  const G = GEOMETRY_LANDMARKS;
+  const pts: Record<string, LandmarkPoint> = {};
+  for (const [key, idx] of Object.entries(G)) {
+    if (!lm[idx]) return null;
+    pts[key] = lm[idx];
+  }
+  // Normalize by inter-ocular distance
+  const iod = dist3d(pts.leftEyeOuter, pts.rightEyeOuter);
+  if (iod < 0.01) return null;
+
+  // Compute 20 normalized distances between key features
+  const pairs: [string, string][] = [
+    ["leftEyeOuter", "rightEyeOuter"],
+    ["leftEyeInner", "rightEyeInner"],
+    ["noseTip", "chin"],
+    ["noseTip", "forehead"],
+    ["noseTip", "mouthTop"],
+    ["mouthLeft", "mouthRight"],
+    ["mouthTop", "mouthBottom"],
+    ["leftEyeOuter", "mouthLeft"],
+    ["rightEyeOuter", "mouthRight"],
+    ["leftEyeOuter", "noseTip"],
+    ["rightEyeOuter", "noseTip"],
+    ["leftEyeOuter", "chin"],
+    ["rightEyeOuter", "chin"],
+    ["forehead", "chin"],
+    ["leftCheek", "rightCheek"],
+    ["leftBrow", "rightBrow"],
+    ["noseLeft", "noseRight"],
+    ["noseTip", "noseBase"],
+    ["leftBrow", "noseTip"],
+    ["rightBrow", "noseTip"],
+  ];
+
+  return pairs.map(([a, b]) => dist3d(pts[a], pts[b]) / iod);
 }
 
-async function getDescriptorFromVideo(video: HTMLVideoElement): Promise<Float32Array | null> {
-  try {
-    const faceapi = await import("@vladmandic/face-api");
-    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 });
-    const det = await faceapi.detectSingleFace(video, opts).withFaceLandmarks(true).withFaceDescriptor();
-    return det?.descriptor ?? null;
-  } catch { return null; }
+/** Compare two geometry vectors, return similarity 0-100 */
+function compareGeometry(v1: number[], v2: number[]): number {
+  if (v1.length !== v2.length || v1.length === 0) return 0;
+  let sumSqDiff = 0;
+  for (let i = 0; i < v1.length; i++) {
+    const diff = v1[i] - v2[i];
+    sumSqDiff += diff * diff;
+  }
+  const rmse = Math.sqrt(sumSqDiff / v1.length);
+  // rmse typically 0-0.5; map to 0-100% similarity
+  const similarity = Math.max(0, Math.min(100, (1 - rmse / 0.5) * 100));
+  return Math.round(similarity);
 }
 
 /* ─────────────────────── Component ─────────────────────── */
@@ -161,7 +183,9 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
   const baselineFrames       = useRef(0);
   const faceVisRef           = useRef(false);
   const stableCount          = useRef(0);
-  const refDescriptor        = useRef<Float32Array | null>(null);
+  const refGeometryRef       = useRef<number[] | null>(null);
+  const liveGeometryRef      = useRef<number[] | null>(null);
+  const imageLandmarkerRef   = useRef<FaceLandmarker | null>(null);
   const videoReadyRef        = useRef(false);
   const autoStartedRef       = useRef(false);
 
@@ -204,9 +228,9 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
       return await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width:  { ideal: isMobile ? 320 : 480 },
-          height: { ideal: isMobile ? 240 : 360 },
-          frameRate: { ideal: isMobile ? 15 : 24, max: 30 },
+          width:  { ideal: CAM_WIDTH },
+          height: { ideal: CAM_HEIGHT },
+          frameRate: { ideal: CAM_FPS, max: 30 },
         },
         audio: false,
       });
@@ -261,7 +285,7 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
     canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
   }, []);
 
-  /* ────────── Face comparison after liveness ────────── */
+  /* ────────── Face comparison after liveness (MediaPipe geometry) ────────── */
   const handleLivenessPassed = useCallback(async () => {
     clearInterval(cdTimerId.current);
     stopLoop();
@@ -276,29 +300,73 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
 
     setStatus("comparing");
     try {
-      const apiOk = await loadFaceApi();
-      if (!apiOk) {
-        setStatus("success");
-        setTimeout(() => { if (mountedRef.current) onVerified(); }, 700);
-        return;
+      // Get live face geometry from current video frame landmarks
+      const video = videoRef.current;
+      const lm = landmarkerRef.current;
+      if (video && lm && video.readyState >= 2) {
+        try {
+          const results = lm.detectForVideo(video, performance.now());
+          const landmarks = results.faceLandmarks?.[0];
+          if (landmarks) {
+            liveGeometryRef.current = extractGeometryVector(landmarks as LandmarkPoint[]);
+          }
+        } catch { /* skip */ }
       }
-      const faceapi = await import("@vladmandic/face-api");
-      let refDesc = refDescriptor.current;
-      if (!refDesc) {
-        refDesc = await getDescriptorFromUrl(referencePhotoUrl);
-        refDescriptor.current = refDesc;
+
+      // Get reference photo geometry if not already cached
+      if (!refGeometryRef.current) {
+        try {
+          // Create IMAGE mode landmarker for reference photo
+          if (!imageLandmarkerRef.current) {
+            const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+            try {
+              imageLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+                runningMode: "IMAGE", numFaces: 1,
+                minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3,
+                outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false,
+              });
+            } catch {
+              imageLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
+                runningMode: "IMAGE", numFaces: 1,
+                minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3,
+                outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false,
+              });
+            }
+          }
+          const img = await new Promise<HTMLImageElement>((res, rej) => {
+            const el = new Image();
+            el.crossOrigin = "anonymous";
+            el.onload = () => res(el);
+            el.onerror = rej;
+            el.src = referencePhotoUrl;
+          });
+          const refResults = imageLandmarkerRef.current.detect(img);
+          const refLandmarks = refResults.faceLandmarks?.[0];
+          if (refLandmarks) {
+            refGeometryRef.current = extractGeometryVector(refLandmarks as LandmarkPoint[]);
+          }
+        } catch (e) {
+          console.error("Ref photo landmark error:", e);
+        }
       }
-      const liveDesc = videoRef.current ? await getDescriptorFromVideo(videoRef.current) : null;
-      if (!refDesc || !liveDesc) {
+
+      const refGeo = refGeometryRef.current;
+      const liveGeo = liveGeometryRef.current;
+
+      if (!refGeo || !liveGeo) {
+        // Can't extract landmarks from one or both → allow through
         setFaceMatchResult({ matched: true, similarity: 0 });
         setStatus("success");
         setTimeout(() => { if (mountedRef.current) onVerified(); }, 900);
         return;
       }
-      const distance = faceapi.euclideanDistance(refDesc, liveDesc);
-      const matched = distance < FACE_MATCH_THRESHOLD;
-      const similarity = Math.round(Math.max(0, Math.min(100, (1 - distance / 1.0) * 100)));
+
+      const similarity = compareGeometry(refGeo, liveGeo);
+      const matched = similarity >= GEOMETRY_MATCH_THRESHOLD * 100;
       setFaceMatchResult({ matched, similarity });
+
       if (matched) {
         setStatus("success");
         setTimeout(() => { if (mountedRef.current) onVerified(); }, 900);
@@ -516,12 +584,44 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
       }
     })();
 
-    // 3) Pre-load face-api + reference descriptor
+    // 3) Pre-load reference photo geometry using MediaPipe IMAGE mode
     if (referencePhotoUrl) {
-      loadFaceApi().then(ok => {
-        if (!ok || !mountedRef.current) return;
-        getDescriptorFromUrl(referencePhotoUrl).then(d => { refDescriptor.current = d; });
-      });
+      (async () => {
+        try {
+          const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+          let imgLm: FaceLandmarker;
+          try {
+            imgLm = await FaceLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+              runningMode: "IMAGE", numFaces: 1,
+              minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3,
+              outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false,
+            });
+          } catch {
+            imgLm = await FaceLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
+              runningMode: "IMAGE", numFaces: 1,
+              minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3,
+              outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false,
+            });
+          }
+          imageLandmarkerRef.current = imgLm;
+          const img = await new Promise<HTMLImageElement>((res, rej) => {
+            const el = new Image();
+            el.crossOrigin = "anonymous";
+            el.onload = () => res(el);
+            el.onerror = rej;
+            el.src = referencePhotoUrl;
+          });
+          const results = imgLm.detect(img);
+          const landmarks = results.faceLandmarks?.[0];
+          if (landmarks && mountedRef.current) {
+            refGeometryRef.current = extractGeometryVector(landmarks as LandmarkPoint[]);
+          }
+        } catch (e) {
+          console.error("Pre-load ref geometry error:", e);
+        }
+      })();
     }
 
     return () => {
@@ -532,6 +632,7 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
       if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
       if (videoRef.current) videoRef.current.srcObject = null;
       landmarkerRef.current?.close();
+      imageLandmarkerRef.current?.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -583,15 +684,15 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
   }, [acquireStream, attachStreamToVideo]);
 
   /* ─── Render ─── */
-  return (
+  const modalContent = (
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center p-2 sm:p-4"
       style={{ zIndex: 9999, backgroundColor: "hsl(var(--foreground)/0.4)", backdropFilter: "blur(12px)" }}
       onClick={e => e.stopPropagation()}
     >
       <div
-        className="bg-card rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
-        style={{ animation: "livenessFadeIn 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards" }}
+        className="bg-card rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col"
+        style={{ animation: "livenessFadeIn 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards", maxHeight: "92dvh" }}
         onClick={e => e.stopPropagation()}
       >
         <style>{`
@@ -602,14 +703,14 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
         `}</style>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Camera className="w-5 h-5 text-primary" />
+        <div className="flex items-center justify-between px-4 sm:px-6 pt-4 pb-2 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Camera className="w-4.5 h-4.5 text-primary" />
             </div>
             <div>
-              <h2 className="font-bold text-foreground leading-tight">Xác minh danh tính</h2>
-              <p className="text-xs text-muted-foreground">Face Mesh · Liveness · So sánh khuôn mặt</p>
+              <h2 className="font-bold text-foreground text-sm leading-tight">Xác minh danh tính</h2>
+              <p className="text-[10px] text-muted-foreground">MediaPipe AI · Liveness</p>
             </div>
           </div>
           <button
@@ -621,7 +722,7 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
         </div>
 
         {/* Camera viewport */}
-        <div className="relative bg-black mx-4 mb-3 rounded-2xl overflow-hidden" style={{ aspectRatio: "4/3" }}>
+        <div className="relative bg-black mx-3 sm:mx-4 mb-3 rounded-2xl overflow-hidden aspect-square max-h-[70dvh]">
           {camActive ? (
             <>
               <video
@@ -737,8 +838,24 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
           )}
         </div>
 
+        {/* Tips */}
+        <div className="px-3 sm:px-4 pt-1 pb-1 shrink-0">
+          <div className="rounded-xl bg-primary/5 border border-primary/10 px-3 py-2.5 space-y-1">
+            <p className="text-[11px] font-semibold text-primary flex items-center gap-1.5">
+              <AlertTriangle className="w-3 h-3" />
+              Lưu ý khi xác minh
+            </p>
+            <ul className="text-[10px] text-muted-foreground space-y-0.5 list-disc list-inside leading-relaxed">
+              <li>Đảm bảo đủ ánh sáng, tránh ngược sáng</li>
+              <li>Không đeo khẩu trang, kính râm che mặt</li>
+              <li>Thực hiện đúng hành động hiển thị trên màn hình</li>
+              <li>Giữ khuôn mặt ở giữa khung hình camera</li>
+            </ul>
+          </div>
+        </div>
+
         {/* Buttons */}
-        <div className="px-4 pb-5 space-y-2.5">
+        <div className="px-3 sm:px-4 pb-4 pt-1 space-y-2 shrink-0">
           {status === "failed" ? (
             <>
               <Button onClick={retry} className="w-full btn-primary-gradient py-5">
@@ -779,6 +896,10 @@ const LivenessVerification = ({ onVerified, onCancel, referencePhotoUrl }: Props
       </div>
     </div>
   );
+
+  return typeof document !== "undefined"
+    ? createPortal(modalContent, document.body)
+    : null;
 };
 
 export default LivenessVerification;
